@@ -1,117 +1,149 @@
 import { useEffect, useState } from "react"
-import { format, startOfWeek, addDays, parseISO } from "date-fns"
+import { format, startOfWeek, addDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, X, Search } from "lucide-react"
 import { supabase } from "@/lib/supabaseClient"
-import type { Auxiliar, Turno, Escala } from "@/types"
+import type { Auxiliar, SlotSemanal } from "@/types"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from "@/components/ui/dialog"
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select"
 
+// Seções/departamentos da escala semanal (baseado na imagem)
+const SECOES = [
+  { key: "rx_urg",      label: "RX URG",            group: null,                    cellBg: "bg-orange-50",  hoverBg: "hover:bg-orange-100"  },
+  { key: "tac1",        label: "TAC 1",              group: null,                    cellBg: "bg-orange-50",  hoverBg: "hover:bg-orange-100"  },
+  { key: "tac2",        label: "TAC 2",              group: null,                    cellBg: "bg-green-50",   hoverBg: "hover:bg-green-100"   },
+  { key: "exames1",     label: "",                   group: "Exames Complementares", cellBg: "bg-gray-100",   hoverBg: "hover:bg-gray-200"    },
+  { key: "exames2",     label: "",                   group: "Exames Complementares", cellBg: "bg-gray-100",   hoverBg: "hover:bg-gray-200"    },
+  { key: "rx_sala6",    label: "SALA 6 BB",          group: "RX",                    cellBg: "bg-teal-50",    hoverBg: "hover:bg-teal-100"    },
+  { key: "sala7_ext",   label: "SALA 7 EXT",         group: "RX",                    cellBg: "bg-teal-50",    hoverBg: "hover:bg-teal-100"    },
+  { key: "transportes", label: "Transportes INT/URG", group: null,                   cellBg: "bg-orange-50",  hoverBg: "hover:bg-orange-100"  },
+]
+
+const TURNOS_TIPO = ["N", "M", "T"] as const
 const DIAS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+
+const ESPECIAIS = [
+  { value: "folga",    label: "Folga (F)",      cls: "text-yellow-700 bg-yellow-50 hover:bg-yellow-100"  },
+  { value: "ferias",   label: "Férias (Fe)",     cls: "text-purple-700 bg-purple-50 hover:bg-purple-100" },
+  { value: "descanso", label: "Descanso (D)",    cls: "text-gray-600   bg-gray-50   hover:bg-gray-100"   },
+  { value: "licenca",  label: "Licença (L)",     cls: "text-blue-600   bg-blue-50   hover:bg-blue-100"   },
+]
+
+const ESPECIAL_CODE: Record<string, string> = {
+  folga: "F", ferias: "Fe", descanso: "D", licenca: "L",
+}
+
+function turnoStyle(t: string) {
+  if (t === "N") return { bg: "bg-blue-100",   text: "text-blue-800"   }
+  if (t === "M") return { bg: "bg-green-100",  text: "text-green-800"  }
+  return            { bg: "bg-orange-100", text: "text-orange-800" }
+}
+
+function cellClass(slot: SlotSemanal | undefined, secao: typeof SECOES[0]) {
+  if (!slot) return `bg-white ${secao.hoverBg}`
+  if (slot.especial === "folga")    return "bg-yellow-100 text-yellow-800 hover:bg-yellow-200"
+  if (slot.especial === "ferias")   return "bg-purple-100 text-purple-800 hover:bg-purple-200"
+  if (slot.especial === "descanso") return "bg-gray-100   text-gray-600   hover:bg-gray-200"
+  if (slot.especial === "licenca")  return "bg-blue-100   text-blue-700   hover:bg-blue-200"
+  return `${secao.cellBg} text-gray-800 ${secao.hoverBg}`
+}
 
 export default function EscalaSemanal() {
   const [referenceDate, setReferenceDate] = useState(() => new Date())
   const [auxiliares, setAuxiliares] = useState<Auxiliar[]>([])
-  const [turnos, setTurnos] = useState<Turno[]>([])
-  const [escalas, setEscalas] = useState<Escala[]>([])
+  const [slots, setSlots] = useState<SlotSemanal[]>([])
   const [loading, setLoading] = useState(true)
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [selectedCell, setSelectedCell] = useState<{ auxiliarId: string; data: string } | null>(null)
-  const [selectedTurnoId, setSelectedTurnoId] = useState("")
-  const [selectedStatus, setSelectedStatus] = useState<"disponivel" | "alocado" | "bloqueado">("alocado")
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [selectedCell, setSelectedCell] = useState<{ data: string; turnoTipo: string; secao: string } | null>(null)
+  const [search, setSearch] = useState("")
 
   const weekStart = startOfWeek(referenceDate, { weekStartsOn: 1 })
-  const weekDays = DIAS.map((_, i) => addDays(weekStart, i))
+  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
 
   async function fetchAll() {
     setLoading(true)
     const startDate = format(weekDays[0], "yyyy-MM-dd")
-    const endDate = format(weekDays[6], "yyyy-MM-dd")
-    const [{ data: a }, { data: t }, { data: e }] = await Promise.all([
+    const endDate   = format(weekDays[6], "yyyy-MM-dd")
+    const [{ data: a }, { data: s }] = await Promise.all([
       supabase.from("auxiliares").select("*").order("nome"),
-      supabase.from("turnos").select("*").order("horario_inicio"),
-      supabase.from("escalas").select("*, turno:turnos(*)").eq("tipo_escala", "semanal").gte("data", startDate).lte("data", endDate),
+      supabase.from("escalas_semanais")
+        .select("*, auxiliar:auxiliares(*)")
+        .gte("data", startDate)
+        .lte("data", endDate),
     ])
     setAuxiliares(a ?? [])
-    setTurnos(t ?? [])
-    setEscalas(e ?? [])
+    setSlots((s ?? []) as SlotSemanal[])
     setLoading(false)
   }
 
   useEffect(() => { fetchAll() }, [weekStart.toISOString()])
 
-  function getEscala(auxiliarId: string, data: string) {
-    return escalas.find((e) => e.auxiliar_id === auxiliarId && e.data === data)
+  function getSlot(data: string, turnoTipo: string, secao: string) {
+    return slots.find(s => s.data === data && s.turno_tipo === turnoTipo && s.secao === secao)
   }
 
-  function openCell(auxiliarId: string, data: string) {
-    const existing = getEscala(auxiliarId, data)
-    setSelectedCell({ auxiliarId, data })
-    setSelectedTurnoId(existing?.turno_id ?? "")
-    setSelectedStatus(existing?.status ?? "alocado")
-    setDialogOpen(true)
+  function getDisplay(slot: SlotSemanal | undefined): string {
+    if (!slot) return ""
+    if (slot.especial) return ESPECIAL_CODE[slot.especial] ?? slot.especial
+    return (slot.auxiliar as Auxiliar | undefined)?.nome ?? ""
   }
 
-  async function saveEscala() {
+  function openDropdown(data: string, turnoTipo: string, secao: string) {
+    setSelectedCell({ data, turnoTipo, secao })
+    setSearch("")
+    setDropdownOpen(true)
+  }
+
+  async function assign(auxiliarId: string | null, especial: string | null) {
     if (!selectedCell) return
-    const existing = getEscala(selectedCell.auxiliarId, selectedCell.data)
+    const existing = getSlot(selectedCell.data, selectedCell.turnoTipo, selectedCell.secao)
     const payload = {
-      auxiliar_id: selectedCell.auxiliarId,
-      data: selectedCell.data,
-      tipo_escala: "semanal" as const,
-      turno_id: selectedTurnoId || null,
-      status: selectedStatus,
+      data:       selectedCell.data,
+      turno_tipo: selectedCell.turnoTipo,
+      secao:      selectedCell.secao,
+      auxiliar_id: auxiliarId,
+      especial,
     }
     if (existing) {
-      await supabase.from("escalas").update(payload).eq("id", existing.id)
+      await supabase.from("escalas_semanais").update(payload).eq("id", existing.id)
     } else {
-      await supabase.from("escalas").insert(payload)
+      await supabase.from("escalas_semanais").insert(payload)
     }
-    setDialogOpen(false)
+    setDropdownOpen(false)
     fetchAll()
   }
 
-  async function clearEscala() {
+  async function clearSlot() {
     if (!selectedCell) return
-    const existing = getEscala(selectedCell.auxiliarId, selectedCell.data)
-    if (existing) {
-      await supabase.from("escalas").delete().eq("id", existing.id)
-    }
-    setDialogOpen(false)
+    const existing = getSlot(selectedCell.data, selectedCell.turnoTipo, selectedCell.secao)
+    if (existing) await supabase.from("escalas_semanais").delete().eq("id", existing.id)
+    setDropdownOpen(false)
     fetchAll()
   }
 
-  function prevWeek() { setReferenceDate((d) => addDays(d, -7)) }
-  function nextWeek() { setReferenceDate((d) => addDays(d, 7)) }
+  const filtered = auxiliares.filter(a =>
+    a.nome.toLowerCase().includes(search.toLowerCase())
+  )
 
-  const statusColors: Record<string, string> = {
-    disponivel: "bg-white text-gray-500",
-    alocado: "bg-primary-50 text-primary-700 font-medium",
-    bloqueado: "bg-red-50 text-red-600",
-  }
+  const selectedSecaoLabel = selectedCell
+    ? (SECOES.find(s => s.key === selectedCell.secao)?.label || selectedCell.secao)
+    : ""
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Horário Semanal</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Semana de {format(weekDays[0], "d MMM", { locale: ptBR })} a {format(weekDays[6], "d MMM yyyy", { locale: ptBR })}
-          </p>
-        </div>
+      {/* Cabeçalho */}
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-base font-bold text-gray-900 uppercase tracking-wide">
+          Escala semana {format(weekDays[0], "d")} a {format(weekDays[6], "d")} de{" "}
+          {format(weekDays[6], "MMMM yyyy", { locale: ptBR })}
+        </h1>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="icon" onClick={prevWeek}>
+          <Button variant="outline" size="icon" onClick={() => setReferenceDate(d => addDays(d, -7))}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <Button variant="outline" size="sm" onClick={() => setReferenceDate(new Date())}>
             Esta semana
           </Button>
-          <Button variant="outline" size="icon" onClick={nextWeek}>
+          <Button variant="outline" size="icon" onClick={() => setReferenceDate(d => addDays(d, 7))}>
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
@@ -120,106 +152,197 @@ export default function EscalaSemanal() {
       {loading ? (
         <div className="text-center text-gray-400 py-12">A carregar...</div>
       ) : (
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="sticky left-0 z-10 bg-gray-50 text-left px-4 py-3 font-medium text-gray-600 border-r border-gray-200 min-w-[150px]">
-                    Auxiliar
-                  </th>
-                  {weekDays.map((day, i) => (
-                    <th key={i} className="px-3 py-3 font-medium text-gray-600 text-center min-w-[100px]">
-                      <div>{DIAS[i]}</div>
-                      <div className="text-xs font-normal text-gray-400">{format(day, "d/M")}</div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {auxiliares.map((aux) => (
-                  <tr key={aux.id} className="border-b border-gray-100 hover:bg-gray-50/50">
-                    <td className="sticky left-0 z-10 bg-white border-r border-gray-200 px-4 py-2 font-medium text-gray-800">
-                      {aux.nome}
-                    </td>
-                    {weekDays.map((day, i) => {
-                      const dataStr = format(day, "yyyy-MM-dd")
-                      const escala = getEscala(aux.id, dataStr)
-                      return (
+        <div className="overflow-x-auto border border-gray-400 rounded shadow-sm">
+          <table className="w-full text-xs border-collapse" style={{ minWidth: 820 }}>
+            <thead>
+              {/* Linha 1 — grupos principais */}
+              <tr className="bg-yellow-200">
+                <th colSpan={2} className="border border-gray-400 px-2 py-2 bg-gray-200" />
+                <th className="border border-gray-400 px-3 py-2 font-bold text-gray-800 text-center">RX URG</th>
+                <th className="border border-gray-400 px-3 py-2 font-bold text-gray-800 text-center">TAC 1</th>
+                <th className="border border-gray-400 px-3 py-2 font-bold text-gray-800 text-center">TAC 2</th>
+                <th colSpan={2} className="border border-gray-400 px-3 py-2 font-bold text-gray-800 text-center">
+                  Exames Complementares
+                </th>
+                <th colSpan={2} className="border border-gray-400 px-3 py-2 font-bold text-gray-800 text-center bg-teal-200">
+                  RX
+                </th>
+                <th className="border border-gray-400 px-3 py-2 font-bold text-gray-800 text-center">
+                  Transportes<br />INT/URG
+                </th>
+              </tr>
+              {/* Linha 2 — sub-cabeçalhos */}
+              <tr className="bg-yellow-100">
+                <th className="border border-gray-400 px-2 py-1 bg-gray-100 text-xs text-gray-500 text-left font-normal min-w-[64px]">
+                  Data
+                </th>
+                <th className="border border-gray-400 px-1 py-1 bg-gray-100 text-xs text-gray-500 text-center font-bold w-6">
+                  T
+                </th>
+                <th className="border border-gray-400 px-2 py-1" />
+                <th className="border border-gray-400 px-2 py-1" />
+                <th className="border border-gray-400 px-2 py-1" />
+                <th className="border border-gray-400 px-2 py-1 text-center text-gray-400 font-normal">Col. 1</th>
+                <th className="border border-gray-400 px-2 py-1 text-center text-gray-400 font-normal">Col. 2</th>
+                <th className="border border-gray-400 px-2 py-1 text-center font-semibold text-gray-700 bg-teal-100">
+                  SALA 6 BB
+                </th>
+                <th className="border border-gray-400 px-2 py-1 text-center font-semibold text-gray-700 bg-teal-100">
+                  SALA 7 EXT
+                </th>
+                <th className="border border-gray-400 px-2 py-1" />
+              </tr>
+            </thead>
+            <tbody>
+              {weekDays.map((day, dayIndex) =>
+                TURNOS_TIPO.map((turno, turnoIndex) => {
+                  const dataStr = format(day, "yyyy-MM-dd")
+                  const ts = turnoStyle(turno)
+                  return (
+                    <tr key={`${dayIndex}-${turno}`} className="border-b border-gray-200">
+                      {/* Célula do dia (rowSpan 3) */}
+                      {turnoIndex === 0 && (
                         <td
-                          key={i}
-                          onClick={() => openCell(aux.id, dataStr)}
-                          className={`px-2 py-2 text-center cursor-pointer border-r border-gray-100 last:border-r-0 transition-colors hover:bg-primary-50 ${escala ? statusColors[escala.status] : "text-gray-300"}`}
+                          rowSpan={3}
+                          className="border border-gray-400 px-2 py-1 text-center bg-gray-100 font-bold text-gray-700 whitespace-nowrap align-middle min-w-[64px]"
                         >
-                          {escala?.turno
-                            ? (escala.turno as Turno).nome
-                            : escala?.status === "bloqueado"
-                            ? "✗"
-                            : "–"}
+                          <span className="text-sm">{format(day, "d")}</span>
+                          <span className="text-xs font-normal text-gray-500"> - {DIAS[dayIndex]}</span>
                         </td>
-                      )
-                    })}
-                  </tr>
-                ))}
-                {auxiliares.length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="text-center text-gray-400 py-8">
-                      Nenhum auxiliar cadastrado.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                      )}
+                      {/* Tipo turno */}
+                      <td className={`border border-gray-400 px-1 py-1.5 text-center font-bold w-6 ${ts.bg} ${ts.text}`}>
+                        {turno}
+                      </td>
+                      {/* Células das seções */}
+                      {SECOES.map(secao => {
+                        const slot = getSlot(dataStr, turno, secao.key)
+                        const display = getDisplay(slot)
+                        return (
+                          <td
+                            key={secao.key}
+                            onClick={() => openDropdown(dataStr, turno, secao.key)}
+                            title={display || "Clique para atribuir"}
+                            className={`border border-gray-200 px-2 py-1.5 text-center cursor-pointer font-medium min-w-[80px] transition-colors ${cellClass(slot, secao)}`}
+                          >
+                            {display || <span className="text-gray-200 font-normal">–</span>}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  )
+                })
+              )}
+            </tbody>
+          </table>
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {selectedCell
-                ? `${format(parseISO(selectedCell.data), "EEEE, d 'de' MMMM", { locale: ptBR })}`
-                : "Editar célula"}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700">Turno</label>
-              <Select value={selectedTurnoId} onValueChange={setSelectedTurnoId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecionar turno..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {turnos.map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.nome} ({t.horario_inicio.slice(0, 5)}-{t.horario_fim.slice(0, 5)})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+      {/* Legenda */}
+      <div className="flex flex-wrap gap-4 mt-3 text-xs text-gray-500">
+        {ESPECIAIS.map(e => (
+          <span key={e.value} className="flex items-center gap-1.5">
+            <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${e.cls}`}>{ESPECIAL_CODE[e.value]}</span>
+            {e.label}
+          </span>
+        ))}
+      </div>
+
+      {/* Dropdown popup */}
+      {dropdownOpen && (
+        <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setDropdownOpen(false)}>
+          <div
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-xl shadow-2xl border border-gray-200 w-80 z-50 overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Cabeçalho do dropdown */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
+              <div>
+                <div className="text-sm font-semibold text-gray-800">
+                  {selectedSecaoLabel || "Secção"}
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5">
+                  {selectedCell &&
+                    `${selectedCell.turnoTipo} · ${format(
+                      new Date(selectedCell.data + "T12:00:00"),
+                      "EEEE, d 'de' MMMM",
+                      { locale: ptBR }
+                    )}`}
+                </div>
+              </div>
+              <button
+                onClick={() => setDropdownOpen(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700">Estado</label>
-              <Select value={selectedStatus} onValueChange={(v) => setSelectedStatus(v as typeof selectedStatus)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="alocado">Alocado</SelectItem>
-                  <SelectItem value="disponivel">Disponível</SelectItem>
-                  <SelectItem value="bloqueado">Bloqueado</SelectItem>
-                </SelectContent>
-              </Select>
+
+            <div className="p-3">
+              {/* Pesquisa */}
+              <div className="relative mb-2">
+                <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Pesquisar auxiliar..."
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="w-full pl-7 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-primary-200"
+                  autoFocus
+                />
+              </div>
+
+              {/* Lista de auxiliares */}
+              <div className="max-h-48 overflow-y-auto space-y-0.5">
+                {filtered.length === 0 && search ? (
+                  <div className="text-xs text-gray-400 text-center py-6">Nenhum auxiliar encontrado</div>
+                ) : (
+                  filtered.map(aux => (
+                    <button
+                      key={aux.id}
+                      onClick={() => assign(aux.id, null)}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-primary-50 rounded-lg transition-colors text-gray-700 flex items-center justify-between"
+                    >
+                      <span>{aux.nome}</span>
+                      {aux.numero_mecanografico && (
+                        <span className="text-xs text-gray-400">#{aux.numero_mecanografico}</span>
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>
+
+              {/* Opções especiais (só quando não está a pesquisar) */}
+              {!search && (
+                <>
+                  <div className="border-t border-gray-100 mt-2 pt-2 space-y-0.5">
+                    <div className="text-[10px] font-semibold text-gray-400 px-3 mb-1 uppercase tracking-wider">
+                      Especial
+                    </div>
+                    {ESPECIAIS.map(esp => (
+                      <button
+                        key={esp.value}
+                        onClick={() => assign(null, esp.value)}
+                        className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors ${esp.cls}`}
+                      >
+                        {esp.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="border-t border-gray-100 mt-2 pt-2">
+                    <button
+                      onClick={clearSlot}
+                      className="w-full text-left px-3 py-2 text-sm text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                    >
+                      ✕ Limpar célula
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={clearEscala}>Limpar</Button>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={saveEscala}>Guardar</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </div>
+      )}
     </div>
   )
 }

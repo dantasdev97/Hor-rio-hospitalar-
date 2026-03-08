@@ -37,8 +37,20 @@ export interface Escala {
   turno_id: string | null
   auxiliar_id: string | null
   status: 'disponivel' | 'alocado' | 'bloqueado'
+  especial: 'folga' | 'ferias' | 'descanso' | 'licenca' | null
   turno?: Turno
   auxiliar?: Auxiliar
+}
+
+export interface SlotSemanal {
+  id: string
+  data: string
+  turno_tipo: 'N' | 'M' | 'T'
+  secao: string
+  auxiliar_id: string | null
+  especial: 'folga' | 'ferias' | 'descanso' | 'licenca' | null
+  auxiliar?: Auxiliar
+  created_at: string
 }
 
 export interface Restricao {
