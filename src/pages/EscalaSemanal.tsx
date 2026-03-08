@@ -317,64 +317,61 @@ export default function EscalaSemanal() {
                       {/* Células */}
                       {SECOES.map(secao => {
                         const slot = getSlot(dataStr, turno, secao.key)
-                        const d1 = slot?.doutor as Doutor | undefined
-                        const d2 = slot?.doutor2 as Doutor | undefined
-                        const aux = slot?.auxiliar as Auxiliar | undefined
-                        const hasDoctor = !!(d1 || d2)
-                        const isExames = secao.key === "exames1" || secao.key === "exames2"
+                        // Célula de doutor: apenas colunas Exames no turno N
+                        const isDocCell = (secao.key === "exames1" || secao.key === "exames2") && turno === "N"
 
+                        if (isDocCell) {
+                          const d1 = slot?.doutor as Doutor | undefined
+                          const d2 = slot?.doutor2 as Doutor | undefined
+                          return (
+                            <td
+                              key={secao.key}
+                              className="border border-gray-400 bg-gray-500 px-1.5 py-1 align-middle min-w-[110px]"
+                            >
+                              <div className="flex items-center gap-1">
+                                {/* Doutor 1 */}
+                                <span
+                                  className="flex-1 cursor-pointer hover:underline truncate font-bold text-[11px] uppercase text-white"
+                                  title={d1 ? d1.nome : "Clique para selecionar doutor"}
+                                  onClick={() => openModal(dataStr, turno, secao.key, "doutor1")}
+                                >
+                                  {d1 ? d1.nome : <span className="text-gray-300 font-normal">Dr. ...</span>}
+                                </span>
+                                {/* Doutor 2 ou botão + */}
+                                {d2 ? (
+                                  <span
+                                    className="cursor-pointer hover:underline text-[10px] text-gray-200 truncate max-w-[55px]"
+                                    title={d2.nome}
+                                    onClick={() => openModal(dataStr, turno, secao.key, "doutor2")}
+                                  >
+                                    | {d2.nome}
+                                  </span>
+                                ) : (
+                                  <button
+                                    className="text-gray-300 hover:text-white flex-shrink-0 ml-0.5"
+                                    title="Adicionar outro doutor"
+                                    onClick={e => { e.stopPropagation(); openModal(dataStr, turno, secao.key, "doutor2") }}
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          )
+                        }
+
+                        // Célula de auxiliar (todas as outras)
+                        const aux = slot?.auxiliar as Auxiliar | undefined
                         return (
                           <td
                             key={secao.key}
-                            className={`border border-gray-300 px-0 py-0 align-top ${secao.cellBg}`}
+                            className={`border border-gray-300 px-1.5 py-1 text-center cursor-pointer align-middle min-w-[80px] hover:brightness-95 ${secao.cellBg}`}
+                            title={aux ? aux.nome : "Clique para selecionar auxiliar"}
+                            onClick={() => openModal(dataStr, turno, secao.key, "auxiliar")}
                           >
-                            <div className="flex flex-col min-h-[36px]">
-                              {/* Zona doutores — visível sempre nas colunas exames, ou quando há doutor */}
-                              {(isExames || hasDoctor) && (
-                                <div className="flex items-center bg-gray-500 text-white px-1.5 py-0.5 min-h-[18px]">
-                                  {/* Doutor 1 */}
-                                  <span
-                                    className="flex-1 cursor-pointer hover:underline truncate font-semibold text-[10px] uppercase"
-                                    title={d1 ? d1.nome : "Clique para selecionar doutor"}
-                                    onClick={() => openModal(dataStr, turno, secao.key, "doutor1")}
-                                  >
-                                    {d1 ? d1.nome : <span className="text-gray-300 font-normal">Dr. ...</span>}
-                                  </span>
-                                  {/* Doutor 2 ou botão + */}
-                                  {d2 ? (
-                                    <span
-                                      className="cursor-pointer hover:underline text-[10px] ml-1 truncate max-w-[60px]"
-                                      title={d2.nome}
-                                      onClick={() => openModal(dataStr, turno, secao.key, "doutor2")}
-                                    >
-                                      | {d2.nome}
-                                    </span>
-                                  ) : (
-                                    <button
-                                      className="ml-1 text-gray-300 hover:text-white flex-shrink-0"
-                                      title="Adicionar outro doutor"
-                                      onClick={e => { e.stopPropagation(); openModal(dataStr, turno, secao.key, "doutor2") }}
-                                    >
-                                      <Plus className="h-3 w-3" />
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                              {/* Zona auxiliar */}
-                              <div
-                                className={`flex-1 px-1.5 py-0.5 cursor-pointer hover:brightness-95 min-h-[18px] flex items-center ${secao.cellBg}`}
-                                title={aux ? aux.nome : "Clique para selecionar auxiliar"}
-                                onClick={() => openModal(dataStr, turno, secao.key, "auxiliar")}
-                              >
-                                <span className="font-semibold text-[10px] uppercase text-gray-800 truncate">
-                                  {aux ? aux.nome : (
-                                    !isExames && !hasDoctor
-                                      ? <span className="text-gray-300 font-normal">–</span>
-                                      : <span className="text-gray-400 font-normal text-[9px]">auxiliar</span>
-                                  )}
-                                </span>
-                              </div>
-                            </div>
+                            <span className="font-bold text-[11px] uppercase text-gray-800">
+                              {aux ? aux.nome : <span className="text-gray-300 font-normal select-none">–</span>}
+                            </span>
                           </td>
                         )
                       })}
