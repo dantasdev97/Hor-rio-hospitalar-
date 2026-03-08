@@ -48,8 +48,12 @@ export interface SlotSemanal {
   turno_tipo: 'N' | 'M' | 'T'
   secao: string
   auxiliar_id: string | null
+  doutor_id: string | null
+  doutor2_id: string | null
   especial: 'folga' | 'ferias' | 'descanso' | 'licenca' | null
   auxiliar?: Auxiliar
+  doutor?: Doutor
+  doutor2?: Doutor
   created_at: string
 }
 
