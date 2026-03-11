@@ -196,7 +196,7 @@ export default function Doutores() {
 
       {/* Dialog Doutor */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editing ? "Editar Doutor" : "Adicionar Doutor"}</DialogTitle>
           </DialogHeader>
@@ -222,7 +222,7 @@ export default function Doutores() {
 
       {/* Dialog Turnos */}
       <Dialog open={turnosDialogOpen} onOpenChange={setTurnosDialogOpen}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Turnos de {selectedDoutor?.nome}</DialogTitle>
           </DialogHeader>

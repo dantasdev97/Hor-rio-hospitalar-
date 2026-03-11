@@ -16,7 +16,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
       </button>
       <div className="flex items-center gap-2">
         <Hospital className="h-5 w-5 text-primary-600" />
-        <span className="font-bold text-gray-900 text-base">HospitalEscalas</span>
+        <span className="font-bold text-gray-900 text-base">CHL · Imagiologia</span>
       </div>
     </header>
   )

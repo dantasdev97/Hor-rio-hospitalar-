@@ -15,8 +15,23 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 
+// Paleta de cores que corresponde às cores do Excel da escala
+const COLOR_PALETTE = [
+  { hex: "#FEF08A", label: "Amarelo – Manhã (M)" },
+  { hex: "#FECDD3", label: "Rosa – Tarde (T)" },
+  { hex: "#C7D2FE", label: "Azul – Noite (N)" },
+  { hex: "#BAE6FD", label: "Ciano – Misto (MT)" },
+  { hex: "#D9F99D", label: "Verde-lima – RX/TAC" },
+  { hex: "#86EFAC", label: "Verde – Feriado" },
+  { hex: "#FCA5A5", label: "Vermelho claro" },
+  { hex: "#DDD6FE", label: "Lilás" },
+  { hex: "#D1D5DB", label: "Cinza – Descanso" },
+  { hex: "#A5F3FC", label: "Ciano claro" },
+  { hex: "#FDBA74", label: "Laranja" },
+]
+
 const schema = z.object({
-  nome: z.string().min(1, "Nome é obrigatório"),
+  nome: z.string().min(1, "Código é obrigatório"),
   horario_inicio: z.string().min(1, "Horário de início é obrigatório"),
   horario_fim: z.string().min(1, "Horário de fim é obrigatório"),
 })
@@ -27,6 +42,7 @@ export default function Turnos() {
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Turno | null>(null)
+  const [selectedColor, setSelectedColor] = useState<string>("")
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -34,7 +50,7 @@ export default function Turnos() {
 
   async function fetchTurnos() {
     setLoading(true)
-    const { data } = await supabase.from("turnos").select("*").order("horario_inicio")
+    const { data } = await supabase.from("turnos").select("*").order("nome")
     setTurnos(data ?? [])
     setLoading(false)
   }
@@ -43,12 +59,14 @@ export default function Turnos() {
 
   function openNew() {
     setEditing(null)
+    setSelectedColor("")
     reset({ nome: "", horario_inicio: "", horario_fim: "" })
     setDialogOpen(true)
   }
 
   function openEdit(turno: Turno) {
     setEditing(turno)
+    setSelectedColor(turno.cor ?? "")
     reset({
       nome: turno.nome,
       horario_inicio: turno.horario_inicio,
@@ -58,10 +76,16 @@ export default function Turnos() {
   }
 
   async function onSubmit(data: FormData) {
+    const payload = {
+      nome: data.nome,
+      horario_inicio: data.horario_inicio,
+      horario_fim: data.horario_fim,
+      cor: selectedColor || null,
+    }
     if (editing) {
-      await supabase.from("turnos").update(data).eq("id", editing.id)
+      await supabase.from("turnos").update(payload).eq("id", editing.id)
     } else {
-      await supabase.from("turnos").insert(data)
+      await supabase.from("turnos").insert(payload)
     }
     setDialogOpen(false)
     fetchTurnos()
@@ -78,7 +102,7 @@ export default function Turnos() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Turnos</h1>
-          <p className="text-sm text-gray-500 mt-1">Gestão dos turnos de trabalho</p>
+          <p className="text-sm text-gray-500 mt-1">Gestão dos turnos e códigos de trabalho</p>
         </div>
         <Button onClick={openNew}>
           <Plus className="h-4 w-4" />
@@ -97,18 +121,25 @@ export default function Turnos() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Nome</TableHead>
-                <TableHead>Horário Início</TableHead>
-                <TableHead>Horário Fim</TableHead>
+                <TableHead>Código</TableHead>
+                <TableHead>Horário</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {turnos.map((turno) => (
                 <TableRow key={turno.id}>
-                  <TableCell className="font-medium">{turno.nome}</TableCell>
-                  <TableCell>{turno.horario_inicio.slice(0, 5)}</TableCell>
-                  <TableCell>{turno.horario_fim.slice(0, 5)}</TableCell>
+                  <TableCell>
+                    <span
+                      className="inline-flex items-center px-2.5 py-1 rounded font-bold text-sm border border-gray-200"
+                      style={{ background: turno.cor ?? "#E5E7EB", color: "#111827", minWidth: 52, justifyContent: "center" }}
+                    >
+                      {turno.nome}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-gray-600">
+                    {turno.horario_inicio.slice(0, 5)} – {turno.horario_fim.slice(0, 5)}
+                  </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-2">
                       <Button size="sm" variant="outline" onClick={() => openEdit(turno)}>
@@ -127,14 +158,14 @@ export default function Turnos() {
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editing ? "Editar Turno" : "Adicionar Turno"}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="nome">Nome do Turno *</Label>
-              <Input id="nome" {...register("nome")} placeholder="Ex: Manhã, Tarde, Noite" />
+              <Label htmlFor="nome">Código do Turno *</Label>
+              <Input id="nome" {...register("nome")} placeholder="Ex: M7, T21, N5, TAC/ECO" />
               {errors.nome && <p className="text-xs text-red-500">{errors.nome.message}</p>}
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -148,6 +179,45 @@ export default function Turnos() {
                 <Input id="horario_fim" type="time" {...register("horario_fim")} />
                 {errors.horario_fim && <p className="text-xs text-red-500">{errors.horario_fim.message}</p>}
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Cor na escala</Label>
+              <div className="flex flex-wrap gap-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                {COLOR_PALETTE.map((c) => (
+                  <button
+                    key={c.hex}
+                    type="button"
+                    title={c.label}
+                    onClick={() => setSelectedColor(c.hex)}
+                    className="w-8 h-8 rounded-md transition-all"
+                    style={{
+                      background: c.hex,
+                      border: `2px solid ${selectedColor === c.hex ? "#111827" : "#D1D5DB"}`,
+                      transform: selectedColor === c.hex ? "scale(1.2)" : "scale(1)",
+                      boxShadow: selectedColor === c.hex ? "0 0 0 2px white, 0 0 0 4px #111827" : "none",
+                    }}
+                  />
+                ))}
+                <button
+                  type="button"
+                  title="Sem cor"
+                  onClick={() => setSelectedColor("")}
+                  className="w-8 h-8 rounded-md border-2 flex items-center justify-center text-gray-400 text-xs transition-all"
+                  style={{ borderColor: !selectedColor ? "#111827" : "#D1D5DB" }}
+                >
+                  ✕
+                </button>
+              </div>
+              {selectedColor && (
+                <div className="flex items-center gap-2">
+                  <span
+                    className="inline-flex items-center px-3 py-1 rounded font-bold text-sm border border-gray-200"
+                    style={{ background: selectedColor, color: "#111827" }}
+                  >
+                    Pré-visualização do código
+                  </span>
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>

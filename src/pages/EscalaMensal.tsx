@@ -1,268 +1,659 @@
-import { useEffect, useState } from "react"
-import { format, getDaysInMonth, startOfMonth, parseISO } from "date-fns"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { format, getDaysInMonth, startOfMonth, getDay, parseISO, addDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { ChevronLeft, ChevronRight, Download, MessageCircle } from "lucide-react"
+import {
+  ChevronLeft, ChevronRight, X, Check,
+  FileDown, MessageCircle, Wand2, Trash2, RotateCcw, Loader2,
+} from "lucide-react"
 import { supabase } from "@/lib/supabaseClient"
-import type { Auxiliar, Turno, Escala } from "@/types"
+import type { Auxiliar, Turno } from "@/types"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from "@/components/ui/dialog"
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select"
+import { AuxDrawer } from "@/components/AuxDrawer"
 
+interface EscalaRow {
+  id: string; data: string; auxiliar_id: string | null
+  turno_id: string | null; codigo_especial: string | null
+}
+interface UndoState { inserted: EscalaRow[]; deleted: EscalaRow[] }
+
+const SPECIAL = [
+  { code: "D",   label: "Descanso",            bg: "#D1D5DB", text: "#374151" },
+  { code: "F",   label: "Folga",               bg: "#F3F4F6", text: "#6B7280" },
+  { code: "Fe",  label: "Comp. Feriado",       bg: "#86EFAC", text: "#14532D" },
+  { code: "FAA", label: "Férias Ano Anterior", bg: "#FCA5A5", text: "#7F1D1D" },
+  { code: "L",   label: "Licença",             bg: "#DDD6FE", text: "#4C1D95" },
+  { code: "Aci", label: "Acidente Trabalho",   bg: "#A5F3FC", text: "#164E63" },
+] as const
+
+const HORARIOS_KEY = "cfg_horarios"
+const DEFAULT_CFG = { bloquearTurnosConsecutivos: true, horasDescansMinimas: 11, maxTurnosNoturnos: 2, maxTurnosMes: 22, maxTurnosNoturnosMes: 4 }
+function loadCfg() {
+  try { const r = localStorage.getItem(HORARIOS_KEY); return r ? { ...DEFAULT_CFG, ...JSON.parse(r) } : DEFAULT_CFG }
+  catch { return DEFAULT_CFG }
+}
+
+function deriveTurnoColor(nome: string): { bg: string; text: string } {
+  const n = nome.toUpperCase()
+  if (n.startsWith("MT"))  return { bg: "#BAE6FD", text: "#0C4A6E" }
+  if (n.startsWith("TAC") || n.startsWith("ECO") || n.startsWith("RX")) return { bg: "#D9F99D", text: "#365314" }
+  if (n.startsWith("T"))   return { bg: "#FECDD3", text: "#881337" }
+  if (n.startsWith("M"))   return { bg: "#FEF08A", text: "#713F12" }
+  if (n.startsWith("N"))   return { bg: "#C7D2FE", text: "#3730A3" }
+  return { bg: "#F3F4F6", text: "#374151" }
+}
+function getTurnoColor(t: Turno) { return t.cor ? { bg: t.cor, text: "#111827" } : deriveTurnoColor(t.nome) }
+function getSpecialColor(code: string) { const s = SPECIAL.find(s => s.code === code); return s ? { bg: s.bg, text: s.text } : { bg: "#F3F4F6", text: "#374151" } }
+
+const DIAS_PT = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"]
+const MESES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
+function isWeekend(year: number, month: number, day: number) { const d = getDay(new Date(year,month,day)); return d===0||d===6 }
+function thS(bg: string, extra: React.CSSProperties={}): React.CSSProperties { return { border:"1px solid #999",padding:"4px 3px",background:bg,fontSize:10,fontWeight:700,textAlign:"center",whiteSpace:"nowrap",...extra } }
+function tdS(bg: string, extra: React.CSSProperties={}): React.CSSProperties { return { border:"1px solid #CCC",padding:"3px 5px",background:bg,fontSize:10,textAlign:"center",...extra } }
+
+// ─── Generating Modal ─────────────────────────────────────────────────────────
+function GenModal({ total, current, log }: { total: number; current: number; log: string[] }) {
+  const pct = total > 0 ? Math.round((current / total) * 100) : 0
+  return (
+    <>
+      <div style={{ position:"fixed",inset:0,zIndex:100,background:"rgba(0,0,0,0.72)",backdropFilter:"blur(6px)",animation:"mFadeIn 0.2s ease" }} />
+      <div style={{ position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:101,width:380,maxWidth:"90vw",background:"#fff",borderRadius:20,boxShadow:"0 32px 80px rgba(0,0,0,0.32)",animation:"mSlideUp 0.3s cubic-bezier(0.34,1.56,0.64,1)",overflow:"hidden" }}>
+        <div style={{ height:4,background:"linear-gradient(90deg,#4F46E5,#7C3AED,#06B6D4)" }} />
+        <div style={{ padding:"2rem",textAlign:"center" }}>
+          <div style={{ width:64,height:64,borderRadius:"50%",background:"linear-gradient(135deg,#4F46E5,#7C3AED)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 1.25rem",boxShadow:"0 8px 24px rgba(79,70,229,0.4)",animation:"iconPulse 1.4s ease-in-out infinite" }}>
+            <Wand2 size={28} color="white" />
+          </div>
+          <h3 style={{ fontSize:17,fontWeight:800,margin:"0 0 0.25rem",color:"#111" }}>A gerar a escala mensal…</h3>
+          <p style={{ fontSize:13,color:"#6B7280",margin:0 }}>Respeitando restrições e regras de horário</p>
+          {total > 0 && (
+            <div style={{ marginTop:"1.5rem" }}>
+              <div style={{ background:"#E5E7EB",borderRadius:99,height:7,overflow:"hidden",marginBottom:8 }}>
+                <div style={{ background:"linear-gradient(90deg,#4F46E5,#7C3AED)",height:"100%",width:`${pct}%`,transition:"width 0.3s ease",borderRadius:99 }} />
+              </div>
+              <p style={{ fontSize:12,color:"#9CA3AF" }}>{current} / {total} entradas · {pct}%</p>
+            </div>
+          )}
+          {log.length > 0 && (
+            <div style={{ marginTop:"1rem",background:"#F8FAFC",borderRadius:10,padding:"0.625rem 0.75rem",textAlign:"left",border:"1px solid #E5E7EB",maxHeight:110,overflowY:"auto" }}>
+              {log.map((e,i)=>(
+                <div key={i} style={{ fontSize:11,color:i===log.length-1?"#4F46E5":"#6B7280",fontWeight:i===log.length-1?600:400,padding:"1px 0",animation:i===log.length-1?"logSlide 0.2s ease":"none" }}>{e}</div>
+              ))}
+            </div>
+          )}
+          {total === 0 && (
+            <div style={{ marginTop:"1rem",display:"flex",justifyContent:"center",gap:5 }}>
+              {[0,1,2].map(i=><div key={i} style={{ width:8,height:8,borderRadius:"50%",background:"#4F46E5",opacity:0.3,animation:`dotBounce 1.2s ${i*0.2}s ease-in-out infinite` }} />)}
+            </div>
+          )}
+        </div>
+      </div>
+      <style>{`
+        @keyframes iconPulse{0%,100%{transform:scale(1);box-shadow:0 8px 24px rgba(79,70,229,0.4)}50%{transform:scale(1.06);box-shadow:0 12px 32px rgba(79,70,229,0.6)}}
+        @keyframes dotBounce{0%,80%,100%{transform:scale(0.7);opacity:0.3}40%{transform:scale(1.2);opacity:1}}
+        @keyframes logSlide{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:translateX(0)}}
+      `}</style>
+    </>
+  )
+}
+
+// ─── Confirm Modal ────────────────────────────────────────────────────────────
+function ConfirmModal({ title, body, onConfirm, onCancel }: { title:string;body:string;onConfirm:()=>void;onCancel:()=>void }) {
+  return (
+    <>
+      <div style={{ position:"fixed",inset:0,zIndex:100,background:"rgba(0,0,0,0.45)",backdropFilter:"blur(4px)",animation:"mFadeIn 0.15s ease" }} onClick={onCancel} />
+      <div style={{ position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:101,width:360,maxWidth:"90vw",background:"#fff",borderRadius:16,boxShadow:"0 24px 64px rgba(0,0,0,0.22)",padding:"1.75rem 1.5rem",animation:"mSlideUp 0.22s cubic-bezier(0.34,1.56,0.64,1)" }}>
+        <div style={{ width:48,height:48,borderRadius:"50%",background:"#FEF2F2",border:"1px solid #FECACA",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 1rem" }}>
+          <Trash2 size={22} color="#EF4444" />
+        </div>
+        <h3 style={{ textAlign:"center",fontSize:16,fontWeight:700,margin:"0 0 0.5rem",color:"#111" }}>{title}</h3>
+        <p style={{ textAlign:"center",fontSize:13,color:"#6B7280",margin:"0 0 1.5rem" }}>{body}</p>
+        <div style={{ display:"flex",gap:8 }}>
+          <button onClick={onCancel} style={{ flex:1,padding:"0.65rem",background:"#F4F4F5",border:"none",borderRadius:9,cursor:"pointer",fontSize:13,fontWeight:600,color:"#374151" }}>Cancelar</button>
+          <button onClick={onConfirm} style={{ flex:1,padding:"0.65rem",background:"#EF4444",border:"none",borderRadius:9,cursor:"pointer",fontSize:13,fontWeight:700,color:"#fff",boxShadow:"0 2px 8px rgba(239,68,68,0.35)" }}>Limpar mesmo</button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function EscalaMensal() {
   const [currentDate, setCurrentDate] = useState(() => new Date())
-  const [auxiliares, setAuxiliares] = useState<Auxiliar[]>([])
-  const [turnos, setTurnos] = useState<Turno[]>([])
-  const [escalas, setEscalas] = useState<Escala[]>([])
-  const [loading, setLoading] = useState(true)
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [selectedCell, setSelectedCell] = useState<{ auxiliarId: string; data: string } | null>(null)
-  const [selectedTurnoId, setSelectedTurnoId] = useState("")
-  const [selectedStatus, setSelectedStatus] = useState<"disponivel" | "alocado" | "bloqueado">("alocado")
+  const [auxiliares, setAuxiliares]   = useState<Auxiliar[]>([])
+  const [turnos, setTurnos]           = useState<Turno[]>([])
+  const [escalas, setEscalas]         = useState<EscalaRow[]>([])
+  const [loading, setLoading]         = useState(true)
+  const [saving, setSaving]           = useState(false)
+  const [generating, setGenerating]   = useState(false)
+  const [genProgress, setGenProgress] = useState({ current: 0, total: 0 })
+  const [genLog, setGenLog]           = useState<string[]>([])
+  const [flashCells, setFlashCells]   = useState<Set<string>>(new Set())
+  const [undoState, setUndoState]     = useState<UndoState | null>(null)
+  const [undoing, setUndoing]         = useState(false)
+  const [showClear, setShowClear]     = useState(false)
+  const [dialogOpen, setDialogOpen]   = useState(false)
+  const [selCell, setSelCell]         = useState<{ auxiliarId: string; data: string } | null>(null)
+  const [selTurnoId, setSelTurnoId]   = useState<string | null>(null)
+  const [selCodigo, setSelCodigo]     = useState<string | null>(null)
+  const [search, setSearch]           = useState("")
+  const [drawerAux, setDrawerAux]     = useState<Auxiliar | null>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
 
-  const year = currentDate.getFullYear()
-  const month = currentDate.getMonth()
+  const year        = currentDate.getFullYear()
+  const month       = currentDate.getMonth()
   const daysInMonth = getDaysInMonth(new Date(year, month))
-  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1)
+  const days        = Array.from({ length: daysInMonth }, (_, i) => i + 1)
 
+  // Sort by numero_mecanografico numerically
+  const sortedAuxiliares = useMemo(() =>
+    [...auxiliares].sort((a, b) => {
+      const na = parseInt(a.numero_mecanografico ?? "999999", 10) || 999999
+      const nb = parseInt(b.numero_mecanografico ?? "999999", 10) || 999999
+      return na - nb
+    }), [auxiliares])
+
+  // ── Fetch ─────────────────────────────────────────────────────────────────
   async function fetchAll() {
     setLoading(true)
     const startDate = format(startOfMonth(currentDate), "yyyy-MM-dd")
-    const endDate = format(new Date(year, month, daysInMonth), "yyyy-MM-dd")
-    const [{ data: a }, { data: t }, { data: e }] = await Promise.all([
-      supabase.from("auxiliares").select("*").order("nome"),
-      supabase.from("turnos").select("*").order("horario_inicio"),
-      supabase.from("escalas").select("*, turno:turnos(*)").eq("tipo_escala", "mensal").gte("data", startDate).lte("data", endDate),
+    const endDate   = format(new Date(year, month, daysInMonth), "yyyy-MM-dd")
+    const [{ data: a },{ data: t },{ data: e }] = await Promise.all([
+      supabase.from("auxiliares").select("*"),
+      supabase.from("turnos").select("*").order("nome"),
+      supabase.from("escalas").select("id,data,auxiliar_id,turno_id,codigo_especial")
+        .eq("tipo_escala","mensal").gte("data",startDate).lte("data",endDate),
     ])
     setAuxiliares(a ?? [])
     setTurnos(t ?? [])
     setEscalas(e ?? [])
     setLoading(false)
   }
-
   useEffect(() => { fetchAll() }, [year, month])
 
-  function getEscala(auxiliarId: string, day: number) {
-    const data = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`
-    return escalas.find((e) => e.auxiliar_id === auxiliarId && e.data === data)
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function mkDateStr(day: number) { return `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}` }
+  function getEscala(auxId: string, day: number) { return escalas.find(e => e.auxiliar_id===auxId && e.data===mkDateStr(day)) }
+  function getCellDisplay(e: EscalaRow | undefined) {
+    if (!e) return null
+    if (e.codigo_especial) return { code: e.codigo_especial, ...getSpecialColor(e.codigo_especial) }
+    if (e.turno_id) { const t = turnos.find(t=>t.id===e.turno_id); if (t) return { code: t.nome, ...getTurnoColor(t) } }
+    return null
+  }
+  function flashCell(auxId: string, data: string) {
+    const k = `${auxId}_${data}`
+    setFlashCells(p => new Set([...p,k]))
+    setTimeout(() => setFlashCells(p => { const n=new Set(p); n.delete(k); return n }), 900)
   }
 
-  function openCell(auxiliarId: string, day: number) {
-    const data = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`
-    const existing = getEscala(auxiliarId, day)
-    setSelectedCell({ auxiliarId, data })
-    setSelectedTurnoId(existing?.turno_id ?? "")
-    setSelectedStatus(existing?.status ?? "alocado")
+  // ── Modal ─────────────────────────────────────────────────────────────────
+  function openCell(auxId: string, day: number) {
+    const d = mkDateStr(day)
+    const ex = escalas.find(e => e.auxiliar_id===auxId && e.data===d)
+    setSelCell({ auxiliarId: auxId, data: d })
+    setSelTurnoId(ex?.turno_id ?? null)
+    setSelCodigo(ex?.codigo_especial ?? null)
+    setSearch("")
     setDialogOpen(true)
+    setTimeout(() => searchRef.current?.focus(), 80)
   }
+  function closeDialog() { setDialogOpen(false); setSearch("") }
+  function selectTurno(id: string) { setSelTurnoId(id); setSelCodigo(null) }
+  function selectCodigo(code: string) { setSelCodigo(code); setSelTurnoId(null) }
 
   async function saveEscala() {
-    if (!selectedCell) return
-    const existing = escalas.find((e) => e.auxiliar_id === selectedCell.auxiliarId && e.data === selectedCell.data)
-    const payload = {
-      auxiliar_id: selectedCell.auxiliarId,
-      data: selectedCell.data,
-      tipo_escala: "mensal" as const,
-      turno_id: selectedTurnoId || null,
-      status: selectedStatus,
-    }
-    if (existing) {
-      await supabase.from("escalas").update(payload).eq("id", existing.id)
-    } else {
-      await supabase.from("escalas").insert(payload)
-    }
-    setDialogOpen(false)
-    fetchAll()
+    if (!selCell || (!selTurnoId && !selCodigo)) return
+    setSaving(true)
+    const ex = escalas.find(e => e.auxiliar_id===selCell.auxiliarId && e.data===selCell.data)
+    const payload = { auxiliar_id:selCell.auxiliarId, data:selCell.data, tipo_escala:"mensal", status:"alocado", turno_id:selTurnoId??null, codigo_especial:selCodigo??null }
+    let savedId: string|null = null
+    if (ex) { const {error} = await supabase.from("escalas").update(payload).eq("id",ex.id); if (!error) savedId=ex.id }
+    else { const {data:rows,error} = await supabase.from("escalas").insert(payload).select("id"); if (!error&&rows?.length) savedId=rows[0].id }
+    setSaving(false); closeDialog()
+    if (savedId) {
+      const nr: EscalaRow = { id:savedId, data:selCell.data, auxiliar_id:selCell.auxiliarId, turno_id:selTurnoId, codigo_especial:selCodigo }
+      setEscalas(p => ex ? p.map(e=>e.id===ex.id?nr:e) : [...p,nr])
+      flashCell(selCell.auxiliarId, selCell.data)
+    } else fetchAll()
   }
 
   async function clearEscala() {
-    if (!selectedCell) return
-    const existing = escalas.find((e) => e.auxiliar_id === selectedCell.auxiliarId && e.data === selectedCell.data)
-    if (existing) await supabase.from("escalas").delete().eq("id", existing.id)
-    setDialogOpen(false)
-    fetchAll()
+    if (!selCell) return
+    const ex = escalas.find(e => e.auxiliar_id===selCell.auxiliarId && e.data===selCell.data)
+    closeDialog()
+    if (ex) { setEscalas(p=>p.filter(e=>e.id!==ex.id)); const {error}=await supabase.from("escalas").delete().eq("id",ex.id); if (error) fetchAll() }
   }
 
-  function prevMonth() { setCurrentDate((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1)) }
-  function nextMonth() { setCurrentDate((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1)) }
+  // ── Gerar Escala Mensal ───────────────────────────────────────────────────
+  async function gerarEscalaMensal() {
+    if (turnos.length === 0) return
+    const cfg = loadCfg()
+    const startOfMonthStr = `${year}-${String(month+1).padStart(2,"0")}-01`
+    const endOfMonthStr   = `${year}-${String(month+1).padStart(2,"0")}-${String(daysInMonth).padStart(2,"0")}`
 
-  function handleExportPDF() { window.print() }
+    const [{ data: restricoes }, { data: ausenciasMes }] = await Promise.all([
+      supabase.from("restricoes").select("auxiliar_id,turno_id"),
+      supabase.from("ausencias").select("auxiliar_id,codigo,data_inicio,data_fim")
+        .lte("data_inicio", endOfMonthStr)
+        .gte("data_fim",    startOfMonthStr),
+    ])
 
-  function handleWhatsApp() {
-    const mesAno = format(currentDate, "MMMM yyyy", { locale: ptBR })
-    let texto = `📅 *Horário Mensal – ${mesAno}*\n\n`
-    auxiliares.forEach((aux) => {
-      const turnosAux = days
-        .map((d) => {
-          const e = getEscala(aux.id, d)
-          if (!e || e.status === "disponivel") return null
-          const turno = e.turno as Turno | undefined
-          return `  Dia ${d}: ${turno ? turno.nome : e.status}`
-        })
-        .filter(Boolean)
-      if (turnosAux.length > 0) {
-        texto += `*${aux.nome}*\n${turnosAux.join("\n")}\n\n`
+    setGenerating(true)
+    setGenProgress({ current:0, total:0 })
+    setGenLog([])
+
+    // Build restriction map: auxId → Set<turnoId>
+    const turnoRestr: Record<string, Set<string>> = {}
+    for (const r of (restricoes ?? [])) {
+      if (!r.turno_id) continue
+      if (!turnoRestr[r.auxiliar_id]) turnoRestr[r.auxiliar_id] = new Set()
+      turnoRestr[r.auxiliar_id].add(r.turno_id)
+    }
+
+    // Build ausências blocked map: `${auxId}_${dateStr}` → codigoEspecial
+    const ausBlocked = new Map<string, string>()
+    for (const aus of (ausenciasMes ?? [])) {
+      let cur = parseISO(aus.data_inicio)
+      const fim = parseISO(aus.data_fim)
+      while (cur <= fim) {
+        ausBlocked.set(`${aus.auxiliar_id}_${format(cur,"yyyy-MM-dd")}`, aus.codigo)
+        cur = addDays(cur, 1)
       }
-    })
-    const url = `https://wa.me/?text=${encodeURIComponent(texto)}`
-    window.open(url, "_blank")
+    }
+
+    const noturnoIds = new Set(turnos.filter(t => t.nome.toUpperCase().startsWith("N")).map(t => t.id))
+
+    type WKey = string
+    const wkCount: Record<string, Record<WKey,number>> = {}
+    const wkNoc:   Record<string, Record<WKey,number>> = {}
+
+    // Pre-count existing escalas
+    for (const e of escalas) {
+      if (!e.auxiliar_id || !e.turno_id) continue
+      const d = parseInt(e.data.substring(8,10))
+      const wk: WKey = `${e.data.substring(0,7)}-w${Math.floor((d-1)/7)}`
+      if (!wkCount[e.auxiliar_id]) wkCount[e.auxiliar_id]={}
+      wkCount[e.auxiliar_id][wk] = (wkCount[e.auxiliar_id][wk]??0)+1
+      if (noturnoIds.has(e.turno_id)) {
+        if (!wkNoc[e.auxiliar_id]) wkNoc[e.auxiliar_id]={}
+        wkNoc[e.auxiliar_id][wk] = (wkNoc[e.auxiliar_id][wk]??0)+1
+        wkNoc[e.auxiliar_id]["__month__"] = (wkNoc[e.auxiliar_id]["__month__"]??0)+1
+      }
+    }
+
+    // Monthly count per aux for fair weekend distribution
+    const monthCount: Record<string,number> = Object.fromEntries(
+      auxiliares.map(a => [a.id, escalas.filter(e=>e.auxiliar_id===a.id&&e.turno_id).length])
+    )
+
+    type PayloadRow = { auxiliar_id:string; data:string; tipo_escala:string; status:string; turno_id:string|null; codigo_especial:string|null }
+    const payloads: PayloadRow[] = []
+    const pending = new Set<string>() // `${auxId}_${dateStr}`
+
+    // Night shift on day d → D on d-1 (rest before), D on d+1, F on d+2
+    function addDescansoFolga(auxId: string, d: number) {
+      // D before night shift
+      if (d > 1) {
+        const pd = mkDateStr(d-1); const k0 = `${auxId}_${pd}`
+        if (!ausBlocked.has(k0) && !escalas.find(e=>e.auxiliar_id===auxId&&e.data===pd) && !pending.has(k0)) {
+          payloads.push({ auxiliar_id:auxId, data:pd, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:"D" })
+          pending.add(k0)
+        }
+      }
+      // D after night shift
+      if (d < daysInMonth) {
+        const nd = mkDateStr(d+1); const k1 = `${auxId}_${nd}`
+        if (!ausBlocked.has(k1) && !escalas.find(e=>e.auxiliar_id===auxId&&e.data===nd) && !pending.has(k1)) {
+          payloads.push({ auxiliar_id:auxId, data:nd, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:"D" })
+          pending.add(k1)
+        }
+      }
+      // F two days after
+      if (d+1 < daysInMonth) {
+        const fd = mkDateStr(d+2); const k2 = `${auxId}_${fd}`
+        if (!ausBlocked.has(k2) && !escalas.find(e=>e.auxiliar_id===auxId&&e.data===fd) && !pending.has(k2)) {
+          payloads.push({ auxiliar_id:auxId, data:fd, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:"F" })
+          pending.add(k2)
+        }
+      }
+    }
+
+    // ── Todos os dias do mês (Seg–Dom, 24/7) ────────────────────────────────
+    for (const aux of sortedAuxiliares) {
+      const restricted = turnoRestr[aux.id] ?? new Set<string>()
+      const available = turnos.filter(t => !restricted.has(t.id))
+      if (available.length === 0) continue
+
+      for (const d of days) {
+        const dateStr = mkDateStr(d)
+        const dow = getDay(new Date(year, month, d))
+
+        if ((dow === 0 || dow === 6) && aux.trabalha_fds === false) {
+          // Preenche fim de semana com Folga para quem não trabalha FDS
+          const k = `${aux.id}_${dateStr}`
+          if (!ausBlocked.has(k) && !escalas.find(e=>e.auxiliar_id===aux.id&&e.data===dateStr) && !pending.has(k)) {
+            payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:"F" })
+            pending.add(k)
+          }
+          continue
+        }
+
+        // Bloqueia dias de ausência registados
+        if (ausBlocked.has(`${aux.id}_${dateStr}`)) continue
+
+        const ex = escalas.find(e => e.auxiliar_id===aux.id && e.data===dateStr)
+        if (ex) continue
+        if (pending.has(`${aux.id}_${dateStr}`)) continue
+
+        // Limite mensal atingido → preenche com Folga
+        const mensal = (cfg as typeof DEFAULT_CFG).maxTurnosMes ?? DEFAULT_CFG.maxTurnosMes
+        if ((monthCount[aux.id]??0) >= mensal) {
+          const k = `${aux.id}_${dateStr}`
+          if (!ausBlocked.has(k) && !pending.has(k)) {
+            payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:"F" })
+            pending.add(k)
+          }
+          continue
+        }
+
+        const wk: WKey = `${dateStr.substring(0,7)}-w${Math.floor((d-1)/7)}`
+        if (!wkNoc[aux.id]) wkNoc[aux.id]={}
+        const nocMensal = (cfg as typeof DEFAULT_CFG).maxTurnosNoturnosMes ?? DEFAULT_CFG.maxTurnosNoturnosMes
+        const nocExceeded = (wkNoc[aux.id][wk]??0) >= cfg.maxTurnosNoturnos
+        const nocMonthlyExceeded = (wkNoc[aux.id]["__month__"]??0) >= nocMensal
+        const candidates = (nocExceeded || nocMonthlyExceeded) ? available.filter(t=>!noturnoIds.has(t.id)) : available
+        if (candidates.length === 0) continue
+
+        const picked = candidates[(d + aux.id.charCodeAt(0)) % candidates.length]
+        payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:picked.id, codigo_especial:null })
+        pending.add(`${aux.id}_${dateStr}`)
+        monthCount[aux.id] = (monthCount[aux.id]??0)+1
+        if (noturnoIds.has(picked.id)) {
+          wkNoc[aux.id][wk] = (wkNoc[aux.id][wk]??0)+1
+          wkNoc[aux.id]["__month__"] = (wkNoc[aux.id]["__month__"]??0)+1
+          addDescansoFolga(aux.id, d)
+        }
+      }
+
+      // Varredura final: preenche qualquer célula ainda em branco com Folga
+      for (const d of days) {
+        const dateStr = mkDateStr(d)
+        const k = `${aux.id}_${dateStr}`
+        if (!ausBlocked.has(k) && !escalas.find(e=>e.auxiliar_id===aux.id&&e.data===dateStr) && !pending.has(k)) {
+          payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:"F" })
+          pending.add(k)
+        }
+      }
+    }
+
+    setGenProgress({ current:0, total:payloads.length })
+    if (payloads.length === 0) { setGenerating(false); return }
+
+    const inserted: EscalaRow[] = []
+    const BATCH = 25
+    for (let i=0; i<payloads.length; i+=BATCH) {
+      const batch = payloads.slice(i, i+BATCH)
+      const { data:rows, error } = await supabase.from("escalas").insert(batch).select("id,data,auxiliar_id,turno_id,codigo_especial")
+      if (!error && rows) {
+        const typed = rows as EscalaRow[]
+        inserted.push(...typed)
+        typed.forEach(r => { if (r.auxiliar_id) flashCell(r.auxiliar_id, r.data) })
+        setEscalas(p => [...p, ...typed])
+        setGenProgress(p => ({ ...p, current: Math.min(p.total, p.current+batch.length) }))
+        const entries = typed.slice(0,3).map(r => {
+          const aName = auxiliares.find(a=>a.id===r.auxiliar_id)?.nome?.split(" ")[0] ?? "—"
+          const tName = r.turno_id ? (turnos.find(t=>t.id===r.turno_id)?.nome ?? "—") : (r.codigo_especial ?? "—")
+          const m = parseInt(r.data.substring(5,7))-1
+          return `✓ ${aName} · ${r.data.substring(8,10)} ${MESES[m]} · ${tName}`
+        })
+        setGenLog(p => [...p, ...entries].slice(-6))
+      }
+      await new Promise(r => setTimeout(r, 70))
+    }
+    setUndoState({ inserted, deleted:[] })
+    setGenerating(false)
   }
 
-  const cellClass = (escala: Escala | undefined) => {
-    if (!escala) return "bg-white hover:bg-gray-50"
-    if (escala.status === "alocado") return "bg-primary-100 text-primary-800 hover:bg-primary-200"
-    if (escala.status === "bloqueado") return "bg-red-100 text-red-700 hover:bg-red-200"
-    return "bg-white hover:bg-gray-50"
+  // ── Limpar ────────────────────────────────────────────────────────────────
+  const ABSENCE_CODES = new Set(["Fe", "FAA", "L", "Aci"])
+  async function limparMensal() {
+    setShowClear(false)
+    const toDelete = escalas.filter(e => !e.codigo_especial || !ABSENCE_CODES.has(e.codigo_especial))
+    const toKeep   = escalas.filter(e => e.codigo_especial && ABSENCE_CODES.has(e.codigo_especial))
+    if (!toDelete.length) return
+    setUndoState({ inserted:[], deleted:toDelete })
+    setEscalas(toKeep)
+    const ids = toDelete.map(e=>e.id)
+    for (let i=0; i<ids.length; i+=50)
+      await supabase.from("escalas").delete().in("id", ids.slice(i,i+50))
   }
+
+  // ── Reverter ──────────────────────────────────────────────────────────────
+  async function reverter() {
+    if (!undoState || undoing) return
+    setUndoing(true)
+    if (undoState.inserted.length) {
+      const ids = undoState.inserted.map(r=>r.id)
+      for (let i=0; i<ids.length; i+=50)
+        await supabase.from("escalas").delete().in("id", ids.slice(i,i+50))
+      setEscalas(p => p.filter(e=>!ids.includes(e.id)))
+    }
+    if (undoState.deleted.length) {
+      const payloads = undoState.deleted.map(({id:_,...rest}) => rest)
+      const { data:rows } = await supabase.from("escalas").insert(payloads).select("id,data,auxiliar_id,turno_id,codigo_especial")
+      if (rows) setEscalas(p => [...p, ...(rows as EscalaRow[])])
+    }
+    setUndoState(null); setUndoing(false)
+  }
+
+  // ── PDF ───────────────────────────────────────────────────────────────────
+  function exportPDF() {
+    const mesAno = format(currentDate,"MMMM yyyy",{locale:ptBR})
+    const hdrs = days.map(d=>{const dw=getDay(new Date(year,month,d));const we=dw===0||dw===6;return`<th style="border:1px solid #999;padding:2px 3px;background:${we?"#B5BCC7":"#D9D9D9"};font-size:9px;font-weight:700;text-align:center;min-width:26px;">${d}<br/><span style="font-weight:400;font-size:8px;color:${we?"#EF4444":"#555"}">${DIAS_PT[dw]}</span></th>`}).join("")
+    let rows=""
+    for(const aux of sortedAuxiliares){
+      rows+=`<tr><td style="border:1px solid #999;padding:2px 4px;font-size:9px;white-space:nowrap;font-weight:700;">${aux.numero_mecanografico??""}</td><td style="border:1px solid #999;padding:2px 6px;font-size:9px;white-space:nowrap;">${aux.nome}</td>`
+      for(const d of days){const e=getEscala(aux.id,d);const di=getCellDisplay(e);const we=isWeekend(year,month,d);rows+=`<td style="border:1px solid #999;padding:2px;background:${di?di.bg:we?"#E5E7EB":"#FFFFFF"};font-size:9px;font-weight:700;text-align:center;">${di?.code??""}</td>`}
+      rows+="</tr>"
+    }
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Escala Mensal</title><style>body{font-family:Arial,sans-serif;margin:10mm}table{border-collapse:collapse;width:100%}@media print{body{margin:5mm}}</style></head><body><h2 style="font-size:12px;margin-bottom:8px">ESCALA MENSAL – ${mesAno.toUpperCase()}</h2><table><thead><tr><th style="border:1px solid #999;padding:2px 4px;background:#D9D9D9;font-size:9px;min-width:40px;">Nº</th><th style="border:1px solid #999;padding:2px 6px;background:#D9D9D9;font-size:9px;min-width:130px;text-align:left;">Nome</th>${hdrs}</tr></thead><tbody>${rows}</tbody></table></body></html>`
+    const w=window.open("","_blank","width=1300,height=750"); if(!w) return
+    w.document.write(html); w.document.close(); w.focus(); setTimeout(()=>w.print(),400)
+  }
+
+  function shareWA() {
+    const mesAno = format(currentDate,"MMMM yyyy",{locale:ptBR}).toUpperCase()
+    const lines=[`📅 *ESCALA MENSAL – ${mesAno}*`,""]
+    for(const aux of sortedAuxiliares){const entries=days.map(d=>getCellDisplay(getEscala(aux.id,d))).filter(Boolean).map((di,i)=>`${days[i]}:${di!.code}`);if(entries.length){lines.push(`*${aux.nome}*`);lines.push(entries.join("  "));lines.push("")}}
+    window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank")
+  }
+
+  const selectedAux    = auxiliares.find(a => a.id===selCell?.auxiliarId)
+  const existingInCell = selCell ? escalas.find(e => e.auxiliar_id===selCell.auxiliarId && e.data===selCell.data) : undefined
+  const filteredTurnos = turnos.filter(t => t.nome.toLowerCase().includes(search.toLowerCase()))
+  const hasSelection   = !!(selTurnoId || selCodigo)
 
   return (
     <div>
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Horário Mensal</h1>
-          <p className="text-sm text-gray-500 mt-1 capitalize">
-            {format(currentDate, "MMMM yyyy", { locale: ptBR })}
-          </p>
+          <p className="text-sm text-gray-500 mt-1 capitalize">{format(currentDate,"MMMM yyyy",{locale:ptBR})}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="icon" onClick={prevMonth}>
-            <ChevronLeft className="h-4 w-4" />
+          <Button variant="outline" size="icon" onClick={()=>setCurrentDate(d=>new Date(d.getFullYear(),d.getMonth()-1,1))}><ChevronLeft className="h-4 w-4"/></Button>
+          <Button variant="outline" size="sm" onClick={()=>setCurrentDate(new Date())}>Este mês</Button>
+          <Button variant="outline" size="icon" onClick={()=>setCurrentDate(d=>new Date(d.getFullYear(),d.getMonth()+1,1))}><ChevronRight className="h-4 w-4"/></Button>
+          <div className="w-px h-6 bg-gray-200 mx-1"/>
+
+          {/* Gerar */}
+          <Button size="sm" disabled={generating||loading||turnos.length===0} onClick={gerarEscalaMensal} className="gap-2"
+            style={{ background:"linear-gradient(135deg,#4F46E5,#7C3AED)",color:"white",boxShadow:generating?"none":"0 2px 10px rgba(79,70,229,0.4)" }}>
+            {generating ? <Loader2 className="h-4 w-4 animate-spin"/> : <Wand2 className="h-4 w-4"/>}
+            {generating ? "A gerar…" : "Gerar Escala"}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setCurrentDate(new Date())}>
-            Este mês
+
+          {/* Limpar */}
+          <Button variant="outline" size="sm" disabled={generating||loading||escalas.length===0}
+            onClick={()=>setShowClear(true)} className="gap-2 border-red-300 text-red-600 hover:bg-red-50">
+            <Trash2 className="h-4 w-4"/> Limpar
           </Button>
-          <Button variant="outline" size="icon" onClick={nextMonth}>
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleExportPDF}>
-            <Download className="h-4 w-4" />
-            PDF
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleWhatsApp} className="text-green-700 border-green-300 hover:bg-green-50">
-            <MessageCircle className="h-4 w-4" />
-            WhatsApp
-          </Button>
+
+          {/* Reverter */}
+          {undoState && (
+            <Button variant="outline" size="sm" disabled={undoing} onClick={reverter}
+              className="gap-2 border-amber-400 text-amber-700 hover:bg-amber-50">
+              {undoing ? <Loader2 className="h-4 w-4 animate-spin"/> : <RotateCcw className="h-4 w-4"/>}
+              Reverter
+            </Button>
+          )}
+
+          <div className="w-px h-6 bg-gray-200 mx-1"/>
+          <Button variant="outline" size="sm" onClick={exportPDF} disabled={loading} className="gap-2"><FileDown className="h-4 w-4"/> PDF</Button>
+          <Button variant="outline" size="sm" onClick={shareWA} disabled={loading} className="gap-2 border-green-400 text-green-700 hover:bg-green-50"><MessageCircle className="h-4 w-4"/> WhatsApp</Button>
         </div>
       </div>
 
-      {/* Legenda */}
-      <div className="flex items-center gap-4 mb-4 text-xs text-gray-500">
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded bg-white border border-gray-300 inline-block" />
-          Disponível
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded bg-primary-100 inline-block" />
-          Alocado
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded bg-red-100 inline-block" />
-          Bloqueado
-        </span>
-      </div>
-
-      {loading ? (
-        <div className="text-center text-gray-400 py-12">A carregar...</div>
-      ) : (
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="text-xs border-collapse" style={{ minWidth: `${150 + days.length * 38}px` }}>
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 font-medium text-gray-600 border-r border-gray-200 min-w-[150px]">
-                    Auxiliar
+      {/* Table */}
+      {loading ? <div className="text-center text-gray-400 py-16 text-sm">A carregar...</div> : (
+        <div className="overflow-x-auto rounded-lg border border-gray-300 shadow-sm">
+          <table className="border-collapse text-xs" style={{ minWidth:`${196+days.length*30}px` }}>
+            <thead>
+              <tr>
+                <th style={thS("#D9D9D9",{minWidth:44,position:"sticky",left:0,zIndex:20})}>Nº</th>
+                <th style={thS("#D9D9D9",{minWidth:150,position:"sticky",left:44,zIndex:20,textAlign:"left",paddingLeft:8})}>Nome</th>
+                {days.map(d=>{const dw=getDay(new Date(year,month,d));const we=dw===0||dw===6;return(
+                  <th key={d} style={thS(we?"#B5BCC7":"#D9D9D9",{width:30,minWidth:30,padding:"3px 2px"})}>
+                    <div style={{fontSize:10}}>{d}</div>
+                    <div style={{fontWeight:400,fontSize:8,color:we?"#DC2626":"#6B7280"}}>{DIAS_PT[dw]}</div>
                   </th>
-                  {days.map((d) => (
-                    <th key={d} className="px-1 py-2 font-medium text-gray-500 text-center w-9 border-r border-gray-100 last:border-r-0">
-                      {d}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {auxiliares.map((aux) => (
-                  <tr key={aux.id} className="border-b border-gray-100">
-                    <td className="sticky left-0 z-10 bg-white border-r border-gray-200 px-3 py-1 font-medium text-gray-800 whitespace-nowrap">
-                      {aux.nome}
+                )})}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedAuxiliares.map((aux,idx)=>{
+                const rowBg = idx%2===0?"#FFFFFF":"#FAFAFA"
+                return(
+                  <tr key={aux.id}>
+                    <td style={tdS("#EBEBEB",{position:"sticky",left:0,zIndex:10,fontWeight:700,fontSize:10,background:"#EBEBEB"})}>{aux.numero_mecanografico??""}</td>
+                    <td style={tdS("#EBEBEB",{position:"sticky",left:44,zIndex:10,whiteSpace:"nowrap",fontWeight:600,fontSize:10,textAlign:"left",paddingLeft:8,background:"#EBEBEB"})}>
+                      <button onClick={()=>setDrawerAux(aux)} style={{background:"none",border:"none",cursor:"pointer",fontWeight:600,fontSize:10,color:"#111827",padding:0,textAlign:"left"}} onMouseEnter={e=>(e.currentTarget.style.color="#2563EB")} onMouseLeave={e=>(e.currentTarget.style.color="#111827")}>{aux.nome}</button>
                     </td>
-                    {days.map((d) => {
-                      const escala = getEscala(aux.id, d)
-                      const turno = escala?.turno as Turno | undefined
-                      return (
-                        <td
-                          key={d}
-                          onClick={() => openCell(aux.id, d)}
-                          title={turno?.nome ?? escala?.status}
-                          className={`w-9 h-8 text-center cursor-pointer border-r border-gray-100 last:border-r-0 transition-colors ${cellClass(escala)}`}
-                        >
-                          {turno ? turno.nome.charAt(0).toUpperCase() : escala?.status === "bloqueado" ? "✗" : ""}
+                    {days.map(d=>{
+                      const e=getEscala(aux.id,d); const di=getCellDisplay(e)
+                      const we=isWeekend(year,month,d)
+                      const bg=di?di.bg:we?"#E5E7EB":rowBg
+                      const fl=flashCells.has(`${aux.id}_${mkDateStr(d)}`)
+                      return(
+                        <td key={d} onClick={()=>openCell(aux.id,d)} title={di?.code??""}
+                          style={{ border:"1px solid #CCC",padding:"2px 0",textAlign:"center",cursor:"pointer",background:bg,color:di?di.text:"#374151",fontWeight:di?700:400,fontSize:10,minWidth:30,userSelect:"none",transition:"filter 0.1s",animation:fl?"cellFlash 0.8s ease":"none" }}
+                          onMouseEnter={ev=>(ev.currentTarget.style.filter="brightness(0.88)")}
+                          onMouseLeave={ev=>(ev.currentTarget.style.filter="brightness(1)")}>
+                          {di?.code??""}
                         </td>
                       )
                     })}
                   </tr>
-                ))}
-                {auxiliares.length === 0 && (
-                  <tr>
-                    <td colSpan={days.length + 1} className="text-center text-gray-400 py-8">
-                      Nenhum auxiliar cadastrado.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                )
+              })}
+              {sortedAuxiliares.length===0&&<tr><td colSpan={days.length+2} style={{textAlign:"center",padding:32,color:"#9CA3AF",fontSize:13}}>Nenhum auxiliar cadastrado.</td></tr>}
+            </tbody>
+          </table>
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {selectedCell
-                ? format(parseISO(selectedCell.data), "d 'de' MMMM yyyy", { locale: ptBR })
-                : "Editar célula"}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700">Turno</label>
-              <Select value={selectedTurnoId} onValueChange={setSelectedTurnoId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecionar turno..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {turnos.map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.nome} ({t.horario_inicio.slice(0, 5)}-{t.horario_fim.slice(0, 5)})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+      {/* Legend */}
+      {!loading&&<div className="mt-3 flex flex-wrap gap-2">
+        {SPECIAL.map(s=><span key={s.code} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded border" style={{background:s.bg,color:s.text,borderColor:s.bg}}><strong>{s.code}</strong> — {s.label}</span>)}
+      </div>}
+
+      {/* Modals */}
+      {generating && <GenModal total={genProgress.total} current={genProgress.current} log={genLog}/>}
+      {showClear && <ConfirmModal title={`Limpar ${format(currentDate,"MMMM yyyy",{locale:ptBR})}?`} body="Todos os dados da escala deste mês serão apagados. Pode reverter com 'Reverter'." onConfirm={limparMensal} onCancel={()=>setShowClear(false)}/>}
+
+      {/* Cell Modal */}
+      {dialogOpen && selCell && <>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:50,backdropFilter:"blur(3px)",animation:"mFadeIn 0.15s ease"}} onClick={closeDialog}/>
+        <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#fff",borderRadius:18,zIndex:51,width:460,maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 32px 80px rgba(0,0,0,0.28),0 0 0 1px rgba(0,0,0,0.06)",animation:"mSlideUp 0.2s cubic-bezier(0.34,1.56,0.64,1)"}}>
+          {/* header */}
+          <div style={{padding:"18px 22px 14px",borderBottom:"1px solid #F0F0F0"}}>
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between"}}>
+              <div>
+                <div style={{fontWeight:800,fontSize:15,color:"#111"}}>{selectedAux?.nome}</div>
+                <div style={{fontSize:12,color:"#9CA3AF",marginTop:3,fontWeight:500}}>{selCell&&format(parseISO(selCell.data),"EEEE, d 'de' MMMM yyyy",{locale:ptBR})}</div>
+              </div>
+              <button onClick={closeDialog} style={{background:"#F4F4F5",border:"none",cursor:"pointer",padding:"6px",borderRadius:8,color:"#71717A",lineHeight:0}}><X size={16}/></button>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700">Estado</label>
-              <Select value={selectedStatus} onValueChange={(v) => setSelectedStatus(v as typeof selectedStatus)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="alocado">Alocado</SelectItem>
-                  <SelectItem value="disponivel">Disponível</SelectItem>
-                  <SelectItem value="bloqueado">Bloqueado</SelectItem>
-                </SelectContent>
-              </Select>
+            {(()=>{const di=getCellDisplay(existingInCell);if(!di)return null;return<div style={{marginTop:10,display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:11,color:"#9CA3AF"}}>Atual:</span><span style={{background:di.bg,color:di.text,fontWeight:700,fontSize:12,padding:"2px 10px",borderRadius:6}}>{di.code}</span></div>})()}
+          </div>
+          {/* body */}
+          <div style={{overflowY:"auto",padding:"16px 22px",flex:1}}>
+            <div style={{marginBottom:18}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#9CA3AF",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8}}>Ocorrências</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7}}>
+                {SPECIAL.map(s=>{const sel=selCodigo===s.code;return(
+                  <button key={s.code} onClick={()=>selectCodigo(s.code)} style={{background:sel?s.bg:"#FAFAFA",color:sel?s.text:"#374151",border:`2px solid ${sel?s.text+"80":"#E5E7EB"}`,borderRadius:10,padding:"9px 6px",cursor:"pointer",fontSize:11,fontWeight:sel?700:500,textAlign:"center",transition:"all 0.12s",outline:"none",boxShadow:sel?`0 0 0 2px ${s.bg}`:"none"}}>
+                    <div style={{fontSize:16,fontWeight:800,lineHeight:1}}>{s.code}</div>
+                    <div style={{fontSize:9,marginTop:4,opacity:0.75,lineHeight:1.2}}>{s.label}</div>
+                    {sel&&<Check size={11} style={{margin:"4px auto 0"}}/>}
+                  </button>
+                )})}
+              </div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+              <div style={{flex:1,height:1,background:"#F0F0F0"}}/>
+              <span style={{fontSize:11,fontWeight:700,color:"#D1D5DB",textTransform:"uppercase",letterSpacing:"0.07em"}}>Turnos</span>
+              <div style={{flex:1,height:1,background:"#F0F0F0"}}/>
+            </div>
+            <div style={{marginBottom:10}}>
+              <input ref={searchRef} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Pesquisar turno..."
+                style={{width:"100%",boxSizing:"border-box",border:"1.5px solid #E5E7EB",borderRadius:9,padding:"8px 12px",fontSize:13,outline:"none",background:"#FAFAFA",color:"#111",transition:"border-color 0.15s"}}
+                onFocus={ev=>(ev.target.style.borderColor="#6366F1")} onBlur={ev=>(ev.target.style.borderColor="#E5E7EB")}/>
+            </div>
+            {filteredTurnos.length===0
+              ? <p style={{textAlign:"center",color:"#9CA3AF",fontSize:12,padding:"14px 0"}}>{turnos.length===0?"Nenhum turno cadastrado.":"Sem resultados."}</p>
+              : <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:7}}>
+                  {filteredTurnos.map(t=>{const {bg,text}=getTurnoColor(t);const sel=selTurnoId===t.id;return(
+                    <button key={t.id} onClick={()=>selectTurno(t.id)} style={{background:sel?bg:"#FAFAFA",color:sel?text:"#374151",border:`2px solid ${sel?text+"60":"#E5E7EB"}`,borderRadius:10,padding:"10px 12px",cursor:"pointer",fontSize:11,fontWeight:sel?700:500,textAlign:"left",display:"flex",alignItems:"center",justifyContent:"space-between",transition:"all 0.12s",outline:"none",boxShadow:sel?`0 0 0 2px ${bg}`:"none"}}>
+                      <div>
+                        <div style={{fontSize:15,fontWeight:800,lineHeight:1}}>{t.nome}</div>
+                        <div style={{fontSize:10,opacity:0.65,marginTop:3}}>{t.horario_inicio.slice(0,5)} – {t.horario_fim.slice(0,5)}</div>
+                      </div>
+                      {sel&&<Check size={15}/>}
+                    </button>
+                  )})}
+                </div>}
+          </div>
+          {/* footer */}
+          <div style={{padding:"14px 22px",borderTop:"1px solid #F0F0F0",display:"flex",gap:8,justifyContent:"space-between",alignItems:"center"}}>
+            <button onClick={clearEscala} disabled={!existingInCell} style={{background:existingInCell?"#FEF2F2":"#F9FAFB",color:existingInCell?"#DC2626":"#D1D5DB",border:`1.5px solid ${existingInCell?"#FECACA":"#E5E7EB"}`,borderRadius:9,padding:"8px 16px",cursor:existingInCell?"pointer":"not-allowed",fontSize:13,fontWeight:600}}>Limpar</button>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={closeDialog} style={{background:"#F4F4F5",color:"#374151",border:"none",borderRadius:9,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:600}}>Cancelar</button>
+              <button onClick={saveEscala} disabled={saving||!hasSelection} style={{background:saving||!hasSelection?"#E5E7EB":"#4F46E5",color:saving||!hasSelection?"#9CA3AF":"#FFFFFF",border:"none",borderRadius:9,padding:"8px 20px",cursor:saving||!hasSelection?"not-allowed":"pointer",fontSize:13,fontWeight:700,boxShadow:!saving&&hasSelection?"0 2px 8px rgba(79,70,229,0.35)":"none"}}>
+                {saving?"A guardar...":"Guardar"}
+              </button>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={clearEscala}>Limpar</Button>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={saveEscala}>Guardar</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </div>
+      </>}
+
+      <style>{`
+        @keyframes mFadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes mSlideUp{from{opacity:0;transform:translate(-50%,-46%) scale(0.95)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+        @keyframes cellFlash{0%{filter:brightness(1.9) saturate(1.5)}50%{filter:brightness(1.3) saturate(1.2)}100%{filter:brightness(1) saturate(1)}}
+      `}</style>
+
+      {/* Aux Drawer */}
+      {drawerAux && (
+        <AuxDrawer
+          aux={drawerAux}
+          onClose={() => setDrawerAux(null)}
+          onUpdated={updated => {
+            setAuxiliares(p => p.map(a => a.id === updated.id ? updated : a))
+            setDrawerAux(updated)
+          }}
+          onAusenciaSaved={() => fetchAll()}
+        />
+      )}
     </div>
   )
 }
