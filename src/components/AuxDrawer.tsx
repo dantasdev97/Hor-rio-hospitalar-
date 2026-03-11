@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react"
+import React, { useEffect, useState, useMemo } from "react"
 import { getDaysInMonth, differenceInDays, parseISO, addDays, format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { X, ChevronLeft, ChevronRight, CalendarDays, Moon, Trash2, User, Calendar } from "lucide-react"
@@ -199,10 +199,33 @@ export function AuxDrawer({ aux, onClose, onUpdated, onAusenciaSaved }: {
   const totalAusenciaDays = Object.entries(stats).filter(([c]) => ["Fe","FAA","L","Aci"].includes(c)).reduce((s,[,v])=>s+v,0)
   const nextAus = ausencias.filter(a => parseISO(a.data_fim) >= new Date()).sort((a,b)=>a.data_inicio.localeCompare(b.data_inicio))[0]
 
+  const overlayStyle: React.CSSProperties = {
+    position: "fixed",
+    inset: 0,
+    zIndex: 40,
+    background: "rgba(0,0,0,0.35)",
+    backdropFilter: "blur(2px)",
+  }
+
+  const drawerStyle: React.CSSProperties = {
+    position: "fixed",
+    top: 0,
+    right: 0,
+    width: 480,
+    maxWidth: "100vw",
+    height: "100vh",
+    background: "#fff",
+    zIndex: 50,
+    display: "flex",
+    flexDirection: "column",
+    boxShadow: "-8px 0 40px rgba(0,0,0,0.18)",
+    animation: "auxSlideIn 0.28s cubic-bezier(0.34,1.2,0.64,1)",
+  }
+
   return (
     <>
-      <div onClick={onClose} style={{ position:"fixed",inset:0,zIndex:40,background:"rgba(0,0,0,0.35)",backdropFilter:"blur(2px)" }} />
-      <div style={{ position:"fixed",top:0,right:0,width:480,maxWidth:"100vw",height:"100vh",background:"#fff",zIndex:50,display:"flex",flexDirection:"column",boxShadow:"-8px 0 40px rgba(0,0,0,0.18)",animation:"auxSlideIn 0.28s cubic-bezier(0.34,1.2,0.64,1)" }}>
+      <div onClick={onClose} style={overlayStyle} />
+      <div style={drawerStyle}>
 
         {/* ── Header ── */}
         <div style={{ background:"linear-gradient(135deg,#1E3A5F,#2563EB)",padding:"18px 20px 0",flexShrink:0 }}>
