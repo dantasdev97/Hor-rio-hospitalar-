@@ -101,7 +101,6 @@ function EyeIcon({ open }: { open: boolean }) {
 }
 
 // ─── Gallery placeholder slot ────────────────────────────────────────────────
-// Future: replace this section with <img> or <video> based on config
 function GalleryPlaceholder() {
   return (
     <div style={{
@@ -146,6 +145,51 @@ function GalleryPlaceholder() {
   )
 }
 
+// ─── Mobile header bar with branding ─────────────────────────────────────────
+function MobileHeader() {
+  return (
+    <div className="login-mobile-header">
+      <MeshBackground />
+      <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "0.75rem" }}>
+        <div style={{
+          width: 48,
+          height: 48,
+          borderRadius: 14,
+          background: "rgba(0,143,200,0.25)",
+          border: "1px solid rgba(0,143,200,0.4)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          backdropFilter: "blur(8px)",
+        }}>
+          <HospitalCross size={26} />
+        </div>
+        <div style={{ textAlign: "center" }}>
+          <p style={{
+            margin: 0,
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "rgba(100,195,240,0.9)",
+            fontFamily: "'DM Sans', sans-serif",
+          }}>
+            CHL · Imagiologia
+          </p>
+          <p style={{
+            margin: "0.2rem 0 0",
+            fontSize: 13,
+            color: "rgba(255,255,255,0.55)",
+            fontFamily: "'DM Sans', sans-serif",
+          }}>
+            Gestão de Horários
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Login ───────────────────────────────────────────────────────────────
 export default function Login() {
   const { signIn } = useAuth()
@@ -161,7 +205,6 @@ export default function Login() {
   const emailRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    // trigger entrance animation
     const t = setTimeout(() => setMounted(true), 50)
     emailRef.current?.focus()
     return () => clearTimeout(t)
@@ -182,30 +225,26 @@ export default function Login() {
   }
 
   return (
-    <div style={{
-      display: "flex",
-      minHeight: "100vh",
-      fontFamily: "'DM Sans', sans-serif",
-    }}>
+    <div className="login-wrapper" style={{ fontFamily: "'DM Sans', sans-serif" }}>
 
-      {/* ── LEFT PANEL: Branding / Gallery ── */}
-      <div style={{
-        flex: "0 0 52%",
-        position: "relative",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "center",
-        padding: "3rem 3.5rem",
-        overflow: "hidden",
-
-        // entrance animation
-        opacity: mounted ? 1 : 0,
-        transform: mounted ? "none" : "translateX(-24px)",
-        transition: "opacity 0.7s cubic-bezier(0.16,1,0.3,1), transform 0.7s cubic-bezier(0.16,1,0.3,1)",
-      }}>
+      {/* ── LEFT PANEL: Branding / Gallery (desktop only) ── */}
+      <div
+        className="login-left"
+        style={{
+          flex: "0 0 52%",
+          position: "relative",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          padding: "3rem 3.5rem",
+          overflow: "hidden",
+          opacity: mounted ? 1 : 0,
+          transform: mounted ? "none" : "translateX(-24px)",
+          transition: "opacity 0.7s cubic-bezier(0.16,1,0.3,1), transform 0.7s cubic-bezier(0.16,1,0.3,1)",
+        }}
+      >
         <MeshBackground />
 
-        {/* content over background */}
         <div style={{ position: "relative", zIndex: 1 }}>
           {/* Logo mark */}
           <div style={{
@@ -286,26 +325,25 @@ export default function Login() {
           </div>
         </div>
 
-        {/* Gallery placeholder — swap with real media in future */}
         <GalleryPlaceholder />
       </div>
 
       {/* ── RIGHT PANEL: Login form ── */}
-      <div style={{
-        flex: 1,
-        background: "#f8f9fb",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "2rem",
-        position: "relative",
-
-        // entrance animation (delayed)
-        opacity: mounted ? 1 : 0,
-        transform: mounted ? "none" : "translateX(20px)",
-        transition: "opacity 0.8s 0.15s cubic-bezier(0.16,1,0.3,1), transform 0.8s 0.15s cubic-bezier(0.16,1,0.3,1)",
-      }}>
-
+      <div
+        className="login-right"
+        style={{
+          flex: 1,
+          background: "#f8f9fb",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          position: "relative",
+          opacity: mounted ? 1 : 0,
+          transform: mounted ? "none" : "translateX(20px)",
+          transition: "opacity 0.8s 0.15s cubic-bezier(0.16,1,0.3,1), transform 0.8s 0.15s cubic-bezier(0.16,1,0.3,1)",
+        }}
+      >
         {/* subtle grid texture */}
         <div style={{
           position: "absolute",
@@ -315,13 +353,12 @@ export default function Login() {
           pointerEvents: "none",
         }} />
 
-        <div style={{
-          width: "100%",
-          maxWidth: 400,
-          position: "relative",
-        }}>
+        {/* Mobile branding header — only visible on small screens */}
+        <MobileHeader />
+
+        <div className="login-form-container" style={{ width: "100%", maxWidth: 400, position: "relative" }}>
           {/* Card */}
-          <div style={{
+          <div className="login-card" style={{
             background: "#ffffff",
             borderRadius: 20,
             padding: "2.5rem",
@@ -379,7 +416,7 @@ export default function Login() {
                     width: "100%",
                     boxSizing: "border-box",
                     padding: "0.75rem 1rem",
-                    fontSize: 14,
+                    fontSize: 16,
                     color: "#0f1929",
                     background: "#f8f9fb",
                     border: `1.5px solid ${error ? "#ef4444" : "#e5e7eb"}`,
@@ -425,7 +462,7 @@ export default function Login() {
                       width: "100%",
                       boxSizing: "border-box",
                       padding: "0.75rem 2.75rem 0.75rem 1rem",
-                      fontSize: 14,
+                      fontSize: 16,
                       color: "#0f1929",
                       background: "#f8f9fb",
                       border: `1.5px solid ${error ? "#ef4444" : "#e5e7eb"}`,
@@ -457,7 +494,7 @@ export default function Login() {
                       border: "none",
                       cursor: "pointer",
                       color: "#9ca3af",
-                      padding: "2px",
+                      padding: "6px",
                       display: "flex",
                       alignItems: "center",
                       transition: "color 0.2s",
@@ -500,8 +537,8 @@ export default function Login() {
                 disabled={loading || !email || !password}
                 style={{
                   width: "100%",
-                  padding: "0.8rem",
-                  fontSize: 14,
+                  padding: "0.875rem",
+                  fontSize: 15,
                   fontWeight: 600,
                   fontFamily: "'DM Sans', sans-serif",
                   letterSpacing: "0.02em",
@@ -517,6 +554,7 @@ export default function Login() {
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "0.5rem",
+                  minHeight: 48,
                 }}
                 onMouseEnter={(e) => {
                   if (!loading && email && password) {
@@ -556,7 +594,7 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Global keyframes */}
+      {/* Global keyframes + responsive styles */}
       <style>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
@@ -569,9 +607,85 @@ export default function Login() {
           80% { transform: translateX(3px); }
         }
 
-        /* Responsive: stack on mobile */
-        @media (max-width: 768px) {
-          .login-left { display: none !important; }
+        /* ── Layout base ── */
+        .login-wrapper {
+          display: flex;
+          min-height: 100vh;
+          min-height: 100dvh;
+        }
+
+        /* Mobile header hidden on desktop */
+        .login-mobile-header {
+          display: none;
+        }
+
+        /* Right panel: centred vertically on desktop */
+        .login-right {
+          justify-content: center !important;
+        }
+
+        .login-form-container {
+          padding: 0;
+        }
+
+        /* ── Mobile (≤ 767px) ── */
+        @media (max-width: 767px) {
+          .login-left {
+            display: none !important;
+          }
+
+          .login-right {
+            justify-content: flex-start !important;
+            background: #f8f9fb;
+            min-height: 100dvh;
+          }
+
+          /* Show mobile branding bar */
+          .login-mobile-header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 2rem 1.5rem 1.75rem;
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(135deg, #040d1a 0%, #071428 60%, #0a1f3d 100%);
+            flex-shrink: 0;
+          }
+
+          .login-form-container {
+            padding: 1.5rem 1rem 2rem;
+            max-width: 100% !important;
+          }
+
+          .login-card {
+            border-radius: 16px !important;
+            padding: 1.75rem 1.25rem !important;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08) !important;
+          }
+        }
+
+        /* ── Small mobile (≤ 380px) ── */
+        @media (max-width: 380px) {
+          .login-mobile-header {
+            padding: 1.5rem 1rem 1.25rem;
+          }
+
+          .login-form-container {
+            padding: 1.25rem 0.75rem 1.5rem;
+          }
+
+          .login-card {
+            padding: 1.5rem 1rem !important;
+          }
+        }
+
+        /* ── Tablet (768px – 1023px) ── */
+        @media (min-width: 768px) and (max-width: 1023px) {
+          .login-left {
+            flex: 0 0 44% !important;
+            padding: 2rem 2.5rem !important;
+          }
         }
       `}</style>
     </div>
