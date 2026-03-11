@@ -3,8 +3,10 @@ import { format, getDaysInMonth, startOfMonth, getDay, parseISO, addDays } from 
 import { ptBR } from "date-fns/locale"
 import {
   ChevronLeft, ChevronRight, X, Check,
-  FileDown, MessageCircle, Wand2, Trash2, RotateCcw, Loader2,
+  FileDown, MessageCircle, Wand2, Trash2, RotateCcw, Loader2, Printer, Loader,
 } from "lucide-react"
+import html2pdf from "html2pdf.js"
+import html2canvas from "html2canvas"
 import { supabase } from "@/lib/supabaseClient"
 import type { Auxiliar, Turno } from "@/types"
 import { Button } from "@/components/ui/button"
@@ -130,6 +132,9 @@ export default function EscalaMensal() {
   const [undoState, setUndoState]     = useState<UndoState | null>(null)
   const [undoing, setUndoing]         = useState(false)
   const [showClear, setShowClear]     = useState(false)
+  const [sharingWA, setSharingWA]     = useState(false)
+  const [showToast, setShowToast]     = useState(false)
+  const [toastMsg, setToastMsg]       = useState("")
   const [dialogOpen, setDialogOpen]   = useState(false)
   const [selCell, setSelCell]         = useState<{ auxiliarId: string; data: string } | null>(null)
   const [selTurnoId, setSelTurnoId]   = useState<string | null>(null)
@@ -137,6 +142,7 @@ export default function EscalaMensal() {
   const [search, setSearch]           = useState("")
   const [drawerAux, setDrawerAux]     = useState<Auxiliar | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const tableRef = useRef<HTMLTableElement>(null)
 
   const year        = currentDate.getFullYear()
   const month       = currentDate.getMonth()
@@ -445,25 +451,230 @@ export default function EscalaMensal() {
   }
 
   // ── PDF ───────────────────────────────────────────────────────────────────
-  function exportPDF() {
+  function generateTableHTML() {
     const mesAno = format(currentDate,"MMMM yyyy",{locale:ptBR})
-    const hdrs = days.map(d=>{const dw=getDay(new Date(year,month,d));const we=dw===0||dw===6;return`<th style="border:1px solid #999;padding:2px 3px;background:${we?"#B5BCC7":"#D9D9D9"};font-size:9px;font-weight:700;text-align:center;min-width:26px;">${d}<br/><span style="font-weight:400;font-size:8px;color:${we?"#EF4444":"#555"}">${DIAS_PT[dw]}</span></th>`}).join("")
+    const hdrs = days.map(d=>{const dw=getDay(new Date(year,month,d));const we=dw===0||dw===6;return`<th style="border:1px solid #999;padding:4px 3px;background:${we?"#B5BCC7":"#D9D9D9"};font-size:9px;font-weight:700;text-align:center;min-width:26px;">${d}<br/><span style="font-weight:400;font-size:8px;color:${we?"#EF4444":"#555"}">${DIAS_PT[dw]}</span></th>`}).join("")
     let rows=""
     for(const aux of sortedAuxiliares){
-      rows+=`<tr><td style="border:1px solid #999;padding:2px 4px;font-size:9px;white-space:nowrap;font-weight:700;">${aux.numero_mecanografico??""}</td><td style="border:1px solid #999;padding:2px 6px;font-size:9px;white-space:nowrap;">${aux.nome}</td>`
-      for(const d of days){const e=getEscala(aux.id,d);const di=getCellDisplay(e);const we=isWeekend(year,month,d);rows+=`<td style="border:1px solid #999;padding:2px;background:${di?di.bg:we?"#E5E7EB":"#FFFFFF"};font-size:9px;font-weight:700;text-align:center;">${di?.code??""}</td>`}
+      rows+=`<tr><td style="border:1px solid #999;padding:4px 4px;font-size:9px;white-space:nowrap;font-weight:700;">${aux.numero_mecanografico??""}</td><td style="border:1px solid #999;padding:4px 6px;font-size:9px;white-space:nowrap;">${aux.nome}</td>`
+      for(const d of days){const e=getEscala(aux.id,d);const di=getCellDisplay(e);const we=isWeekend(year,month,d);rows+=`<td style="border:1px solid #999;padding:4px 2px;background:${di?di.bg:we?"#E5E7EB":"#FFFFFF"};font-size:9px;font-weight:700;text-align:center;">${di?.code??""}</td>`}
       rows+="</tr>"
     }
-    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Escala Mensal</title><style>body{font-family:Arial,sans-serif;margin:10mm}table{border-collapse:collapse;width:100%}@media print{body{margin:5mm}}</style></head><body><h2 style="font-size:12px;margin-bottom:8px">ESCALA MENSAL – ${mesAno.toUpperCase()}</h2><table><thead><tr><th style="border:1px solid #999;padding:2px 4px;background:#D9D9D9;font-size:9px;min-width:40px;">Nº</th><th style="border:1px solid #999;padding:2px 6px;background:#D9D9D9;font-size:9px;min-width:130px;text-align:left;">Nome</th>${hdrs}</tr></thead><tbody>${rows}</tbody></table></body></html>`
-    const w=window.open("","_blank","width=1300,height=750"); if(!w) return
-    w.document.write(html); w.document.close(); w.focus(); setTimeout(()=>w.print(),400)
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Escala Mensal - ${mesAno.toUpperCase()}</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 15mm;
+      background: #fff;
+    }
+    
+    .container {
+      max-width: 100%;
+      margin: 0 auto;
+    }
+    
+    h2 {
+      font-size: 14px;
+      margin: 0 0 15px 0;
+      text-align: center;
+      font-weight: 700;
+      color: #111827;
+    }
+    
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-family: Arial, sans-serif;
+    }
+    
+    th, td {
+      border: 1px solid #999;
+      padding: 4px 3px;
+      text-align: center;
+    }
+    
+    th {
+      background: #D9D9D9;
+      font-size: 8px;
+      font-weight: 700;
+      padding: 4px 2px;
+    }
+    
+    /* Primeira coluna (Nº) */
+    th:first-child,
+    td:first-child {
+      min-width: 40px;
+      font-weight: 700;
+    }
+    
+    /* Segunda coluna (Nome) */
+    th:nth-child(2),
+    td:nth-child(2) {
+      min-width: 130px;
+      text-align: left;
+      padding-left: 8px;
+    }
+    
+    /* Colunas de dias */
+    thead th:nth-child(n+3) {
+      padding: 3px 2px;
+      font-size: 8px;
+      min-width: 26px;
+      width: 26px;
+    }
+    
+    tbody td:nth-child(n+3) {
+      padding: 3px 2px;
+      font-size: 8px;
+      min-width: 26px;
+      width: 26px;
+    }
+    
+    /* Finals de semana em cabeçalho */
+    tbody tr:nth-child(odd) {
+      background: #FFFFFF;
+    }
+    
+    tbody tr:nth-child(even) {
+      background: #FAFAFA;
+    }
+    
+    @media print {
+      body {
+        margin: 10mm;
+        padding: 0;
+      }
+      .container {
+        page-break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>ESCALA MENSAL – ${mesAno.toUpperCase()}</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="min-width:40px;">Nº</th>
+          <th style="min-width:130px;text-align:left;">Nome</th>
+          ${hdrs}
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>`
   }
 
-  function shareWA() {
-    const mesAno = format(currentDate,"MMMM yyyy",{locale:ptBR}).toUpperCase()
-    const lines=[`📅 *ESCALA MENSAL – ${mesAno}*`,""]
-    for(const aux of sortedAuxiliares){const entries=days.map(d=>getCellDisplay(getEscala(aux.id,d))).filter(Boolean).map((di,i)=>`${days[i]}:${di!.code}`);if(entries.length){lines.push(`*${aux.nome}*`);lines.push(entries.join("  "));lines.push("")}}
-    window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank")
+  function exportPDF() {
+    const element = document.createElement("div")
+    element.innerHTML = generateTableHTML()
+    
+    const opt: any = {
+      margin: 10,
+      filename: `Escala_Mensal_${format(currentDate,"yyyy-MM")}.pdf`,
+      image: { type: "png", quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { 
+        orientation: "landscape",
+        unit: "mm",
+        format: "a4",
+        putOnlyUsedFonts: true,
+        compress: true,
+      },
+      pagebreak: { mode: ["avoid-all", "css", "legacy"] }
+    }
+    
+    html2pdf().set(opt).from(element).save()
+  }
+
+  function printEscala() {
+    const mesAno = format(currentDate,"MMMM yyyy",{locale:ptBR})
+    const html = generateTableHTML()
+    const w=window.open("","_blank","width=1300,height=750")
+    if(!w) return
+    w.document.write(html)
+    w.document.close()
+    w.focus()
+    setTimeout(()=>w.print(),400)
+  }
+
+  async function shareWA() {
+    if (!tableRef.current) return
+    setSharingWA(true)
+    try {
+      const canvas = await html2canvas(tableRef.current, {
+        backgroundColor: "#FFFFFF",
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+      })
+      
+      // Converter canvas para blob
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          setSharingWA(false)
+          return
+        }
+        
+        try {
+          // Copiar imagem para clipboard (API moderna)
+          const item = new ClipboardItem({ 'image/png': blob })
+          await navigator.clipboard.write([item])
+          
+          // Mostrar toast de sucesso
+          setToastMsg("✅ Imagem copiada! Cole no WhatsApp com Ctrl+V")
+          setShowToast(true)
+          
+          // Auto-hide toast após 3 segundos
+          setTimeout(() => setShowToast(false), 3000)
+          setSharingWA(false)
+          
+          // Abrir grupo do WhatsApp após 500ms
+          setTimeout(() => {
+            window.open("https://chat.whatsapp.com/L3sgtM9ZkP046xVbkBi5gH?mode=gi_t", "_blank")
+          }, 500)
+        } catch (clipboardErr) {
+          console.error("Erro ao copiar para clipboard:", clipboardErr)
+          // Fallback: fazer download se clipboard falhar
+          const url = URL.createObjectURL(blob)
+          const link = document.createElement("a")
+          link.href = url
+          link.download = `Escala_Mensal_${format(currentDate,"yyyy-MM")}.png`
+          document.body.appendChild(link)
+          link.click()
+          document.body.removeChild(link)
+          URL.revokeObjectURL(url)
+          
+          setToastMsg("✅ Imagem baixada! Compartilhe manualmente no WhatsApp")
+          setShowToast(true)
+          setTimeout(() => setShowToast(false), 3000)
+          setSharingWA(false)
+          
+          setTimeout(() => {
+            window.open("https://chat.whatsapp.com/L3sgtM9ZkP046xVbkBi5gH?mode=gi_t", "_blank")
+          }, 500)
+        }
+      }, "image/png")
+    } catch (err) {
+      console.error("Erro ao capturar tabela:", err)
+      setSharingWA(false)
+      setToastMsg("❌ Erro ao processar imagem. Abrindo WhatsApp...")
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 3000)
+      
+      // Abrir WhatsApp mesmo se falhar
+      window.open("https://chat.whatsapp.com/L3sgtM9ZkP046xVbkBi5gH?mode=gi_t", "_blank")
+    }
   }
 
   const selectedAux    = auxiliares.find(a => a.id===selCell?.auxiliarId)
@@ -508,15 +719,19 @@ export default function EscalaMensal() {
           )}
 
           <div className="w-px h-6 bg-gray-200 mx-1"/>
-          <Button variant="outline" size="sm" onClick={exportPDF} disabled={loading} className="gap-2"><FileDown className="h-4 w-4"/> PDF</Button>
-          <Button variant="outline" size="sm" onClick={shareWA} disabled={loading} className="gap-2 border-green-400 text-green-700 hover:bg-green-50"><MessageCircle className="h-4 w-4"/> WhatsApp</Button>
+          <Button variant="outline" size="sm" onClick={printEscala} disabled={loading} className="gap-2"><Printer className="h-4 w-4"/> Imprimir</Button>
+          <Button variant="outline" size="sm" onClick={exportPDF} disabled={loading} className="gap-2"><FileDown className="h-4 w-4"/> Baixar PDF</Button>
+          <Button variant="outline" size="sm" onClick={shareWA} disabled={loading || sharingWA} className="gap-2 border-green-400 text-green-700 hover:bg-green-50">
+            {sharingWA ? <Loader className="h-4 w-4 animate-spin"/> : <MessageCircle className="h-4 w-4"/>}
+            {sharingWA ? "Enviando..." : "WhatsApp"}
+          </Button>
         </div>
       </div>
 
       {/* Table */}
       {loading ? <div className="text-center text-gray-400 py-16 text-sm">A carregar...</div> : (
         <div className="overflow-x-auto rounded-lg border border-gray-300 shadow-sm">
-          <table className="border-collapse text-xs" style={{ minWidth:`${196+days.length*30}px` }}>
+          <table ref={tableRef} className="border-collapse text-xs" style={{ minWidth:`${196+days.length*30}px` }}>
             <thead>
               <tr>
                 <th style={thS("#D9D9D9",{minWidth:44,position:"sticky",left:0,zIndex:20})}>Nº</th>
@@ -640,7 +855,55 @@ export default function EscalaMensal() {
         @keyframes mFadeIn{from{opacity:0}to{opacity:1}}
         @keyframes mSlideUp{from{opacity:0;transform:translate(-50%,-46%) scale(0.95)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
         @keyframes cellFlash{0%{filter:brightness(1.9) saturate(1.5)}50%{filter:brightness(1.3) saturate(1.2)}100%{filter:brightness(1) saturate(1)}}
+        
+        /* Toast notification */
+        @keyframes slideInUp {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        
+        @keyframes slideOutDown {
+          from {
+            opacity: 1;
+            transform: translateY(0);
+          }
+          to {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+        }
+        
+        .toast {
+          position: fixed;
+          bottom: 20px;
+          right: 20px;
+          background: white;
+          padding: 16px 20px;
+          border-radius: 8px;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+          z-index: 9999;
+          font-size: 14px;
+          font-weight: 500;
+          animation: slideInUp 0.3s ease;
+        }
+        
+        .toast.hidden {
+          animation: slideOutDown 0.3s ease;
+        }
       `}</style>
+
+      {/* Toast Notification */}
+      {showToast && (
+        <div className="toast" style={{ animation: showToast ? "slideInUp 0.3s ease" : "slideOutDown 0.3s ease" }}>
+          {toastMsg}
+        </div>
+      )}
 
       {/* Aux Drawer */}
       {drawerAux && (

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import { format, startOfWeek, addDays, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { ChevronLeft, ChevronRight, Search, X, Check, FileDown, MessageCircle, Wand2, Loader2, Trash2, RotateCcw } from "lucide-react"
+import { ChevronLeft, ChevronRight, Search, X, Check, FileDown, MessageCircle, Wand2, Loader2, Trash2, RotateCcw, Printer, Loader } from "lucide-react"
+import html2pdf from "html2pdf.js"
+import html2canvas from "html2canvas"
 import { supabase } from "@/lib/supabaseClient"
 import { Button } from "@/components/ui/button"
 
@@ -115,6 +117,9 @@ export default function EscalaSemanal() {
   const [saving,     setSaving]     = useState(false)
   const [generating, setGenerating] = useState(false)
   const [genLog,     setGenLog]     = useState<string[]>([])
+  const [sharingWA,  setSharingWA]  = useState(false)
+  const [showToast,  setShowToast]  = useState(false)
+  const [toastMsg,   setToastMsg]   = useState("")
   const [undoState,  setUndoState]  = useState<UndoState | null>(null)
   const [undoing,    setUndoing]    = useState(false)
   const [showClear,  setShowClear]  = useState(false)
@@ -124,6 +129,7 @@ export default function EscalaSemanal() {
   const [selPersonId, setSelPersonId] = useState("")
   const [search,      setSearch]      = useState("")
   const searchRef = useRef<HTMLInputElement>(null)
+  const tableRef = useRef<HTMLTableElement>(null)
 
   const weekStart = startOfWeek(referenceDate, { weekStartsOn:1 })
   const weekDays  = Array.from({ length:7 }, (_,i) => addDays(weekStart, i))
@@ -408,37 +414,288 @@ export default function EscalaSemanal() {
     setUndoState(null); setUndoing(false)
   }
 
-  // ── Export PDF ────────────────────────────────────────────────────────────
-  function exportPDF() {
+  // ── Generate Table HTML ──────────────────────────────────────────────────
+  function generateTableHTML() {
     const wt = `Escala semana ${format(weekDays[0],"d",{locale:ptBR})} a ${format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}`
-    const thS=(txt:string,bg:string,ex="")=>`<th style="border:1px solid #999;padding:4px 6px;background:${bg};font-size:10px;font-weight:700;text-align:center;white-space:nowrap;${ex}">${txt}</th>`
-    const tdS=(txt:string,bg:string,ex="")=>`<td style="border:1px solid #999;padding:3px 5px;background:${bg};font-size:10px;text-align:center;font-weight:${txt?"700":"400"};${ex}">${txt}</td>`
+    const thS=(txt:string,bg:string,ex="")=>`<th style="border:1px solid #999;padding:6px 8px;background:${bg};font-size:10px;font-weight:700;text-align:center;white-space:nowrap;${ex}">${txt}</th>`
+    const tdS=(txt:string,bg:string,ex="")=>`<td style="border:1px solid #999;padding:4px 6px;background:${bg};font-size:10px;text-align:center;font-weight:${txt?"600":"400"};${ex}">${txt}</td>`
     let rows=""
     for(const [di,day] of weekDays.entries()){
       const ds=format(day,"yyyy-MM-dd")
       for(const [ti,turno] of TURNOS.entries()){
         rows+="<tr>"
-        if(ti===0) rows+=`<td rowspan="3" style="border:1px solid #999;padding:4px;background:${DAY_BG[di%DAY_BG.length]};text-align:center;font-weight:700;font-size:11px;vertical-align:middle;">${format(day,"d")}<br/>${DIAS_PT[di]}</td>`
-        rows+=tdS(turno,SHIFT_BG[turno as TurnoLetra],"font-weight:700;min-width:22px;")
-        for(const p of POSTOS) rows+=tdS(getCellName(getEscala(ds,turno,p.key)),p.bg,"min-width:80px;")
+        if(ti===0) rows+=`<td rowspan="3" style="border:1px solid #999;padding:8px;background:${DAY_BG[di%DAY_BG.length]};text-align:center;font-weight:700;font-size:12px;vertical-align:middle;min-width:50px;">${format(day,"d")}<br/><span style="font-size:11px;font-weight:600;">${DIAS_PT[di]}</span></td>`
+        rows+=tdS(turno,SHIFT_BG[turno as TurnoLetra],"font-weight:700;min-width:28px;font-size:11px;")
+        for(const p of POSTOS) rows+=tdS(getCellName(getEscala(ds,turno,p.key)),p.bg,"min-width:90px;")
         rows+="</tr>"
       }
     }
-    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${wt}</title><style>body{font-family:Arial,sans-serif;margin:20px}table{border-collapse:collapse;width:100%}@media print{body{margin:8mm}}</style></head><body><h2 style="font-size:13px;margin-bottom:10px">${wt}</h2><table><thead><tr>${thS("","#D9D9D9","min-width:40px;")}${thS("","#D9D9D9","min-width:24px;")}${thS("RX URG","#FFD700")}${thS("TAC 1","#FFD700")}${thS("TAC 2","#FFD700")}<th colspan="2" style="border:1px solid #999;padding:4px 6px;background:#FFD700;font-size:10px;font-weight:700;text-align:center;">Exames Complementares</th><th colspan="2" style="border:1px solid #999;padding:4px 6px;background:#FFD700;font-size:10px;font-weight:700;text-align:center;">RX</th>${thS("Transportes INT/URG","#FFD700")}</tr><tr>${thS("","#D9D9D9")}${thS("","#D9D9D9")}${["","","","",""].map(()=>thS("","#FFD700")).join("")}${thS("SALA 6 BB","#FFD700")}${thS("SALA 7 EXT","#FFD700")}${thS("","#FFD700")}</tr></thead><tbody>${rows}</tbody></table></body></html>`
-    const w=window.open("","_blank","width=1100,height=700"); if(!w) return
-    w.document.write(html); w.document.close(); w.focus(); setTimeout(()=>w.print(),400)
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${wt}</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+    
+    .page {
+      background: white;
+      margin: 0 auto;
+      padding: 25px 30px;
+      max-width: 1200px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 25px;
+      border-bottom: 3px solid #1A3A4A;
+      padding-bottom: 15px;
+    }
+    
+    .header h1 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #1A3A4A;
+      margin-bottom: 5px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .header p {
+      font-size: 12px;
+      color: #666;
+      margin: 0;
+    }
+    
+    .table-wrapper {
+      overflow-x: auto;
+      margin: 20px 0;
+    }
+    
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 10px;
+    }
+    
+    thead {
+      background: #f0f0f0;
+    }
+    
+    th {
+      border: 1px solid #999;
+      padding: 6px 4px;
+      background: #D9D9D9;
+      font-size: 9px;
+      font-weight: 700;
+      text-align: center;
+      white-space: nowrap;
+      color: #333;
+    }
+    
+    td {
+      border: 1px solid #999;
+      padding: 5px 4px;
+      text-align: center;
+      font-weight: 500;
+      background: white;
+      min-width: 45px;
+    }
+    
+    tbody tr:nth-child(even) {
+      background: #f9f9f9;
+    }
+    
+    /* Células de dados */
+    tbody td {
+      font-size: 9px;
+      padding: 4px 3px;
+    }
+    
+    .shift-cell {
+      font-weight: 700 !important;
+      font-size: 10px !important;
+      padding: 4px 4px !important;
+    }
+    
+    .day-header {
+      font-weight: 700 !important;
+      font-size: 11px !important;
+      vertical-align: middle;
+      min-width: 50px;
+    }
+    
+    /* Cores dos turnos */
+    .shift-n { background: #BDD7EE; color: #000; }
+    .shift-m { background: #C6EFCE; color: #000; }
+    .shift-t { background: #FFEB9C; color: #000; }
+    
+    @media print {
+      body {
+        background: white;
+        padding: 0;
+      }
+      .page {
+        box-shadow: none;
+        max-width: 100%;
+        margin: 0;
+        padding: 15mm;
+      }
+      .header {
+        page-break-after: avoid;
+      }
+      .table-wrapper {
+        page-break-inside: avoid;
+      }
+      table {
+        page-break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <h1>📅 Escala Semanal</h1>
+      <p>${wt}</p>
+    </div>
+    
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th style="min-width:50px;text-align:center;">Dia</th>
+            <th style="min-width:28px;">Turno</th>
+            <th style="background:#FFD700;">RX URG</th>
+            <th style="background:#FFD700;">TAC 1</th>
+            <th style="background:#FFD700;">TAC 2</th>
+            <th style="background:#FFD700;">Exames<br/>Comp. 1</th>
+            <th style="background:#FFD700;">Exames<br/>Comp. 2</th>
+            <th style="background:#FFD700;">SALA 6<br/>BB</th>
+            <th style="background:#FFD700;">SALA 7<br/>EXT</th>
+            <th style="background:#FFD700;">Transportes<br/>INT/URG</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>`
   }
 
-  function shareWA() {
-    const hdr=`📅 *ESCALA ${format(weekDays[0],"d",{locale:ptBR}).toUpperCase()} A ${format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR}).toUpperCase()}*`
-    const lines=[hdr,""]
-    for(const [di,day] of weekDays.entries()){
-      const ds=format(day,"yyyy-MM-dd")
-      lines.push(`*${DIAS_PT[di]} ${format(day,"d/M")}*`)
-      for(const t of TURNOS){ const cells=POSTOS.map(p=>getCellName(getEscala(ds,t,p.key))||"—").join(" | "); lines.push(`  _${t}:_ ${cells}`) }
-      lines.push("")
+  function printEscala() {
+    const html = generateTableHTML()
+    const w=window.open("","_blank","width=1100,height=700")
+    if(!w) return
+    w.document.write(html)
+    w.document.close()
+    w.focus()
+    setTimeout(()=>w.print(),400)
+  }
+
+  function exportPDF() {
+    const element = document.createElement("div")
+    element.innerHTML = generateTableHTML()
+    
+    const opt: any = {
+      margin: 10,
+      filename: `Escala_Semanal_${format(weekDays[0],"yyyy-MM-dd")}.pdf`,
+      image: { type: "png", quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { 
+        orientation: "landscape",
+        unit: "mm",
+        format: "a4",
+        putOnlyUsedFonts: true,
+        compress: true,
+      },
+      pagebreak: { mode: ["avoid-all", "css", "legacy"] }
     }
-    window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank")
+    
+    html2pdf().set(opt).from(element).save()
+  }
+
+  async function shareWA() {
+    if (!tableRef.current) return
+    setSharingWA(true)
+    try {
+      const canvas = await html2canvas(tableRef.current, {
+        backgroundColor: "#FFFFFF",
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+      })
+      
+      // Converter canvas para blob
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          setSharingWA(false)
+          return
+        }
+        
+        try {
+          // Copiar imagem para clipboard (API moderna)
+          const item = new ClipboardItem({ 'image/png': blob })
+          await navigator.clipboard.write([item])
+          
+          // Mostrar toast de sucesso
+          setToastMsg("✅ Imagem copiada! Cole no WhatsApp com Ctrl+V")
+          setShowToast(true)
+          
+          // Auto-hide toast após 3 segundos
+          setTimeout(() => setShowToast(false), 3000)
+          setSharingWA(false)
+          
+          // Abrir grupo do WhatsApp após 500ms
+          setTimeout(() => {
+            window.open("https://chat.whatsapp.com/FUWDNsJBbgn3n6sa6YR6a6?mode=gi_t", "_blank")
+          }, 500)
+        } catch (clipboardErr) {
+          console.error("Erro ao copiar para clipboard:", clipboardErr)
+          // Fallback: fazer download se clipboard falhar
+          const url = URL.createObjectURL(blob)
+          const link = document.createElement("a")
+          link.href = url
+          link.download = `Escala_Semanal_${format(weekDays[0],"yyyy-MM-dd")}.png`
+          document.body.appendChild(link)
+          link.click()
+          document.body.removeChild(link)
+          URL.revokeObjectURL(url)
+          
+          setToastMsg("✅ Imagem baixada! Compartilhe manualmente no WhatsApp")
+          setShowToast(true)
+          setTimeout(() => setShowToast(false), 3000)
+          setSharingWA(false)
+          
+          setTimeout(() => {
+            window.open("https://chat.whatsapp.com/FUWDNsJBbgn3n6sa6YR6a6?mode=gi_t", "_blank")
+          }, 500)
+        }
+      }, "image/png")
+    } catch (err) {
+      console.error("Erro ao capturar tabela:", err)
+      setSharingWA(false)
+      setToastMsg("❌ Erro ao processar imagem. Abrindo WhatsApp...")
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 3000)
+      
+      // Abrir WhatsApp mesmo se falhar
+      window.open("https://chat.whatsapp.com/FUWDNsJBbgn3n6sa6YR6a6?mode=gi_t", "_blank")
+    }
   }
 
   // ── Modal helpers ─────────────────────────────────────────────────────────
@@ -490,35 +747,45 @@ export default function EscalaSemanal() {
           )}
 
           <div className="w-px h-6 bg-gray-200 mx-1"/>
-          <Button onClick={exportPDF} disabled={loading} variant="outline" size="sm" className="gap-2"><FileDown className="h-4 w-4"/> PDF</Button>
-          <Button onClick={shareWA} disabled={loading} variant="outline" size="sm" className="gap-2 border-green-400 text-green-700 hover:bg-green-50"><MessageCircle className="h-4 w-4"/> WhatsApp</Button>
+          <Button onClick={printEscala} disabled={loading} variant="outline" size="sm" className="gap-2"><Printer className="h-4 w-4"/> Imprimir</Button>
+          <Button onClick={exportPDF} disabled={loading} variant="outline" size="sm" className="gap-2"><FileDown className="h-4 w-4"/> Baixar PDF</Button>
+          <Button onClick={shareWA} disabled={loading || sharingWA} variant="outline" size="sm" className="gap-2 border-green-400 text-green-700 hover:bg-green-50">
+            {sharingWA ? <Loader className="h-4 w-4 animate-spin"/> : <MessageCircle className="h-4 w-4"/>}
+            {sharingWA ? "Enviando..." : "WhatsApp"}
+          </Button>
         </div>
       </div>
 
       {/* Table */}
       {loading ? <div className="text-center text-gray-400 py-16 text-sm">A carregar...</div> : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
-          <table style={{ borderCollapse:"collapse",width:"100%" }}>
-            <thead>
-              <tr>
-                <th colSpan={2} style={{ ...thBase,backgroundColor:"#D9D9D9",minWidth:"70px" }}/>
-                <th style={{ ...thBase,backgroundColor:"#FFD700" }}>RX URG</th>
-                <th style={{ ...thBase,backgroundColor:"#FFD700" }}>TAC 1</th>
-                <th style={{ ...thBase,backgroundColor:"#FFD700" }}>TAC 2</th>
-                <th colSpan={2} style={{ ...thBase,backgroundColor:"#FFD700" }}>Exames Complementares</th>
-                <th colSpan={2} style={{ ...thBase,backgroundColor:"#FFD700" }}>RX</th>
-                <th style={{ ...thBase,backgroundColor:"#FFD700" }}>Transportes<br/>INT/URG</th>
-              </tr>
-              <tr>
-                <th colSpan={2} style={{ ...thBase,backgroundColor:"#D9D9D9" }}/>
-                {(["RX_URG","TAC1","TAC2","EXAM1","EXAM2"] as PostoKey[]).map(k=><th key={k} style={{ ...thBase,backgroundColor:"#FFD700" }}/>)}
-                <th style={{ ...thBase,backgroundColor:"#FFD700" }}>SALA 6 BB</th>
-                <th style={{ ...thBase,backgroundColor:"#FFD700" }}>SALA 7 EXT</th>
-                <th style={{ ...thBase,backgroundColor:"#FFD700" }}/>
-              </tr>
-            </thead>
-            <tbody>
-              {weekDays.map((day,di)=>{
+        <div style={{ background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 2px 8px rgba(0,0,0,0.1)", marginBottom: "16px" }}>
+          <div style={{ textAlign: "center", marginBottom: "20px", paddingBottom: "15px", borderBottom: "3px solid #1A3A4A" }}>
+            <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#1A3A4A", margin: "0 0 4px 0", textTransform: "uppercase", letterSpacing: "0.5px" }}>📅 Escala Semanal</h2>
+            <p style={{ fontSize: "12px", color: "#666", margin: 0 }}>Semana {format(weekDays[0],"d",{locale:ptBR})} a {format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}</p>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table ref={tableRef} style={{ borderCollapse: "collapse", width: "100%", fontSize: "11px" }}>
+              <thead>
+                <tr style={{ background: "#f0f0f0" }}>
+                  <th colSpan={2} style={{ ...thBase, backgroundColor: "#D9D9D9", minWidth: "70px" }}/>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>RX URG</th>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>TAC 1</th>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>TAC 2</th>
+                  <th colSpan={2} style={{ ...thBase, backgroundColor: "#FFD700" }}>Exames Complementares</th>
+                  <th colSpan={2} style={{ ...thBase, backgroundColor: "#FFD700" }}>RX</th>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>Transportes<br/>INT/URG</th>
+                </tr>
+                <tr style={{ background: "#f0f0f0" }}>
+                  <th colSpan={2} style={{ ...thBase, backgroundColor: "#D9D9D9" }}/>
+                  {(["RX_URG","TAC1","TAC2","EXAM1","EXAM2"] as PostoKey[]).map(k=><th key={k} style={{ ...thBase, backgroundColor: "#FFD700" }}/>)}
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>SALA 6 BB</th>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>SALA 7 EXT</th>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}/>
+                </tr>
+              </thead>
+              <tbody>
+                {weekDays.map((day,di)=>{
                 const dateStr=format(day,"yyyy-MM-dd")
                 return TURNOS.map((turno,ti)=>(
                   <tr key={`${di}-${turno}`}>
@@ -543,7 +810,8 @@ export default function EscalaSemanal() {
               })}
             </tbody>
           </table>
-        </div>
+            </div>
+          </div>
       )}
 
       {/* Modals */}
@@ -629,7 +897,69 @@ export default function EscalaSemanal() {
       <style>{`
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
         @keyframes slideUp{from{opacity:0;transform:translateY(20px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+        
+        /* Melhorias visuais da tabela */
+        table tbody tr:nth-child(even) {
+          background-color: #f9f9f9;
+        }
+        table tbody tr:hover {
+          background-color: #f0f0f0;
+        }
+        table tbody td {
+          transition: background-color 0.2s ease;
+        }
+        table tbody td:hover {
+          filter: brightness(0.95);
+        }
+        
+        /* Toast notification */
+        @keyframes slideInUp {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        
+        @keyframes slideOutDown {
+          from {
+            opacity: 1;
+            transform: translateY(0);
+          }
+          to {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+        }
+        
+        .toast {
+          position: fixed;
+          bottom: 20px;
+          right: 20px;
+          background: white;
+          padding: 16px 20px;
+          border-radius: 8px;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+          z-index: 9999;
+          font-size: 14px;
+          font-weight: 500;
+          animation: slideInUp 0.3s ease;
+        }
+        
+        .toast.hidden {
+          animation: slideOutDown 0.3s ease;
+        }
       `}</style>
+
+      {/* Toast Notification */}
+      {showToast && (
+        <div className="toast" style={{ animation: showToast ? "slideInUp 0.3s ease" : "slideOutDown 0.3s ease" }}>
+          {toastMsg}
+        </div>
+      )}
     </>
   )
 }
