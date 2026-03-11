@@ -84,7 +84,7 @@ function SettingRow({ label, description, children }: {
   children: React.ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between gap-6 py-3">
+    <div className="flex items-center justify-between gap-3 py-3">
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-gray-800">{label}</p>
         {description && <p className="text-xs text-gray-500 mt-0.5">{description}</p>}
@@ -295,7 +295,7 @@ function TabEmpresa() {
           <CardDescription>Aparece nos documentos exportados (PDF, etc.)</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
             <div
               className="h-20 w-32 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center bg-gray-50 overflow-hidden cursor-pointer hover:border-primary-400 transition-colors"
               onClick={() => fileRef.current?.click()}
@@ -645,7 +645,7 @@ export default function Configuracoes() {
 
       {/* Tabs */}
       <Tabs defaultValue="empresa">
-        <TabsList className="mb-2">
+        <TabsList className="mb-2 w-full sm:w-auto">
           <TabsTrigger value="empresa">
             <Building2 className="h-3.5 w-3.5 mr-1.5" />
             Empresa

@@ -758,7 +758,7 @@ export default function EscalaSemanal() {
 
       {/* Table */}
       {loading ? <div className="text-center text-gray-400 py-16 text-sm">A carregar...</div> : (
-        <div style={{ background: "white", borderRadius: "8px", padding: "24px", boxShadow: "0 2px 8px rgba(0,0,0,0.1)", marginBottom: "16px" }}>
+        <div className="escala-semanal-card" style={{ background: "white", borderRadius: "8px", padding: "16px", boxShadow: "0 2px 8px rgba(0,0,0,0.1)", marginBottom: "16px" }}>
           <div style={{ textAlign: "center", marginBottom: "20px", paddingBottom: "15px", borderBottom: "3px solid #1A3A4A" }}>
             <h2 style={{ fontSize: "16px", fontWeight: 700, color: "#1A3A4A", margin: "0 0 4px 0", textTransform: "uppercase", letterSpacing: "0.5px" }}>📅 Escala Semanal</h2>
             <p style={{ fontSize: "12px", color: "#666", margin: 0 }}>Semana {format(weekDays[0],"d",{locale:ptBR})} a {format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}</p>
@@ -897,6 +897,9 @@ export default function EscalaSemanal() {
       <style>{`
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
         @keyframes slideUp{from{opacity:0;transform:translateY(20px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+        @media (min-width: 640px) {
+          .escala-semanal-card { padding: 24px !important; }
+        }
         
         /* Melhorias visuais da tabela */
         table tbody tr:nth-child(even) {

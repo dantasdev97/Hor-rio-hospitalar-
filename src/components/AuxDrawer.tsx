@@ -202,7 +202,7 @@ export function AuxDrawer({ aux, onClose, onUpdated, onAusenciaSaved }: {
   return (
     <>
       <div onClick={onClose} style={{ position:"fixed",inset:0,zIndex:40,background:"rgba(0,0,0,0.35)",backdropFilter:"blur(2px)" }} />
-      <div style={{ position:"fixed",top:0,right:0,width:480,maxWidth:"100vw",height:"100vh",background:"#fff",zIndex:50,display:"flex",flexDirection:"column",boxShadow:"-8px 0 40px rgba(0,0,0,0.18)",animation:"auxSlideIn 0.28s cubic-bezier(0.34,1.2,0.64,1)" }}>
+      <div className="aux-drawer" style={{ position:"fixed",top:0,right:0,width:480,maxWidth:"100vw",height:"100%",height:"100dvh",background:"#fff",zIndex:50,display:"flex",flexDirection:"column",boxShadow:"-8px 0 40px rgba(0,0,0,0.18)",animation:"auxSlideIn 0.28s cubic-bezier(0.34,1.2,0.64,1)" }}>
 
         {/* ── Header ── */}
         <div style={{ background:"linear-gradient(135deg,#1E3A5F,#2563EB)",padding:"18px 20px 0",flexShrink:0 }}>
@@ -373,7 +373,7 @@ export function AuxDrawer({ aux, onClose, onUpdated, onAusenciaSaved }: {
                   Ausências <span style={{ color:"#9CA3AF",fontWeight:400,fontSize:11 }}>({filtered.length})</span>
                 </div>
                 {/* Filter chips */}
-                <div style={{ display:"flex",gap:4 }}>
+                <div style={{ display:"flex",flexWrap:"wrap",gap:4 }}>
                   <button onClick={() => { setFilterCode(null); setPage(0) }}
                     style={{ padding:"3px 9px",borderRadius:99,border:"none",cursor:"pointer",fontSize:10,fontWeight:600,background:!filterCode?"#1E3A5F":"#E5E7EB",color:!filterCode?"#fff":"#374151" }}>
                     Todos
@@ -442,7 +442,12 @@ export function AuxDrawer({ aux, onClose, onUpdated, onAusenciaSaved }: {
 
         </div>
       </div>
-      <style>{`@keyframes auxSlideIn { from{transform:translateX(100%)} to{transform:translateX(0)} }`}</style>
+      <style>{`
+        @keyframes auxSlideIn { from{transform:translateX(100%)} to{transform:translateX(0)} }
+        @media (max-width: 480px) {
+          .aux-drawer { padding-top: 56px; }
+        }
+      `}</style>
     </>
   )
 }

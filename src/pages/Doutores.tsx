@@ -125,7 +125,7 @@ export default function Doutores() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Doutores</h1>
           <p className="text-sm text-gray-500 mt-1">Gestão de médicos e turnos atribuídos</p>
@@ -136,7 +136,7 @@ export default function Doutores() {
         </Button>
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-x-auto">
         {loading ? (
           <div className="p-8 text-center text-gray-400">A carregar...</div>
         ) : doutores.length === 0 ? (
