@@ -10,6 +10,7 @@ import {
   X,
   Hospital,
   LogOut,
+  Link2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/contexts/AuthContext"
@@ -19,6 +20,7 @@ const navItems = [
   { to: "/escala-semanal", label: "Horário Semanal", icon: Calendar },
   { to: "/auxiliares", label: "Auxiliares", icon: Users },
   { to: "/turnos", label: "Turnos", icon: Clock },
+  { to: "/turno-postos", label: "Turnos → Postos", icon: Link2 },
   { to: "/doutores", label: "Doutores", icon: Stethoscope },
   { to: "/restricoes", label: "Restrições", icon: Ban },
   { to: "/configuracoes", label: "Configurações", icon: Settings },

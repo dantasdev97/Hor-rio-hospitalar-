@@ -31,6 +31,7 @@ export interface Turno {
   horario_inicio: string
   horario_fim: string
   cor: string | null
+  postos: string[]
   created_at: string
 }
 
