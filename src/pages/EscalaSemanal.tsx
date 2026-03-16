@@ -127,6 +127,7 @@ export default function EscalaSemanal() {
   const [selPersonId,  setSelPersonId]  = useState("")
   const [selPersonIds, setSelPersonIds] = useState<string[]>([]) // multi-select para TRANSPORT+M
   const [search,       setSearch]       = useState("")
+  const [filterTab,    setFilterTab]    = useState<"available" | "restricted">("available")
   const searchRef = useRef<HTMLInputElement>(null)
   const tableRef = useRef<HTMLTableElement>(null)
 
@@ -299,10 +300,10 @@ export default function EscalaSemanal() {
       setSelPersonId(tipo==="doutor" ? (ex?.doutor_id??"") : (ex?.auxiliar_id??""))
       setSelPersonIds([])
     }
-    setSearch(""); setDialogOpen(true)
+    setSearch(""); setFilterTab("available"); setDialogOpen(true)
     setTimeout(() => searchRef.current?.focus(), 60)
   }
-  function closeDialog() { setDialogOpen(false); setSearch("") }
+  function closeDialog() { setDialogOpen(false); setSearch(""); setFilterTab("available") }
 
   async function saveEscala() {
     if (!selCell) return
@@ -712,7 +713,10 @@ export default function EscalaSemanal() {
   // ── Modal helpers ─────────────────────────────────────────────────────────
   const isDouble    = selCell ? isTransportDouble(selCell.posto, selCell.turnoLetra) : false
   const personList: Person[] = selCell?.tipo==="doutor" ? doutores : auxiliares
-  const filtered = personList.filter(p=>p.nome.toLowerCase().includes(search.toLowerCase()))
+  const searchFiltered = personList.filter(p=>p.nome.toLowerCase().includes(search.toLowerCase()))
+  const availableList = searchFiltered.filter(p => selCell ? !auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data) : true)
+  const restrictedList = searchFiltered.filter(p => selCell ? auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data) : false)
+  const filtered = filterTab === "available" ? availableList : restrictedList
   const posto      = selCell ? postoInfo(selCell.posto) : null
   const accentBg   = posto?.bg==="#FFFFFF" ? "#4A90A4" : (posto?.bg ?? "#4A90A4")
   const dayIdx     = selCell ? weekDays.findIndex(d=>format(d,"yyyy-MM-dd")===selCell.data) : -1
@@ -894,6 +898,26 @@ export default function EscalaSemanal() {
                 {search && <button onClick={()=>setSearch("")} style={{ background:"none",border:"none",cursor:"pointer",padding:0 }}><X size={13} color="#AAA"/></button>}
               </div>
             </div>
+
+            {/* Filter tabs */}
+            {selCell?.tipo !== "doutor" && (
+              <div style={{ display:"flex",gap:"6px",padding:"8px 20px 0" }}>
+                <button
+                  onClick={()=>setFilterTab("available")}
+                  style={{ flex:1,padding:"6px 0",borderRadius:"8px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,transition:"all 0.15s",
+                    background:filterTab==="available"?"#1A3A4A":"#F4F4F4",
+                    color:filterTab==="available"?"#FFF":"#555" }}>
+                  Disponíveis ({availableList.length})
+                </button>
+                <button
+                  onClick={()=>setFilterTab("restricted")}
+                  style={{ flex:1,padding:"6px 0",borderRadius:"8px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,transition:"all 0.15s",
+                    background:filterTab==="restricted"?"#DC2626":"#F4F4F4",
+                    color:filterTab==="restricted"?"#FFF":"#555" }}>
+                  Com restrição ({restrictedList.length})
+                </button>
+              </div>
+            )}
 
             {/* Info for TRANSPORT+M multi-select */}
             {isDouble && (
