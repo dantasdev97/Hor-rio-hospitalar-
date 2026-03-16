@@ -344,6 +344,48 @@ export default function EscalaMensal() {
     }
     const pendingTurno = new Map<string, string>() // idem para os payloads desta geração
 
+    // Rastrear turnos usados por dia para evitar que 2 auxiliares fiquem no mesmo turno
+    const dayTurnoUsed = new Map<string, Set<string>>() // dateStr → Set<turnoId>
+
+    // Pré-planeamento: garantir exatamente 2 auxiliares em noturno por dia
+    const dayNocPlan = new Map<string, string[]>() // dateStr → [auxId1, auxId2]
+    const auxNocPlanned: Record<string, number> = Object.fromEntries(auxiliares.map(a => [a.id, 0]))
+    const nocMensalPlan = (cfg as typeof DEFAULT_CFG).maxTurnosNoturnosMes ?? DEFAULT_CFG.maxTurnosNoturnosMes
+    const auxPlanNocDays = new Map<string, Set<number>>() // auxId → Set<dayNum> (days pre-planned for noc)
+
+    for (const d of days) {
+      const dateStr = mkDateStr(d)
+      const dow = getDay(new Date(year, month, d))
+      const planned: string[] = []
+
+      const eligibleForNoc = sortedAuxiliares
+        .filter(aux => {
+          if ((dow === 0 || dow === 6) && aux.trabalha_fds === false) return false
+          if (ausBlocked.has(`${aux.id}_${dateStr}`)) return false
+          if (escalas.find(e => e.auxiliar_id === aux.id && e.data === dateStr)) return false
+          // Não planear noturno se já planejado noturno no dia anterior (precisa de descanso)
+          const prevNocDays = auxPlanNocDays.get(aux.id) ?? new Set<number>()
+          if (prevNocDays.has(d - 1) || prevNocDays.has(d - 2)) return false
+          const restricted = turnoRestr[aux.id] ?? new Set<string>()
+          const available = turnos.filter(t => !restricted.has(t.id))
+          if (!wkNoc[aux.id]) wkNoc[aux.id] = {}
+          const wk: WKey = `${dateStr.substring(0,7)}-w${Math.floor((d-1)/7)}`
+          if ((wkNoc[aux.id][wk] ?? 0) >= cfg.maxTurnosNoturnos) return false
+          if ((wkNoc[aux.id]["__month__"] ?? 0) >= nocMensalPlan) return false
+          return available.some(t => noturnoIds.has(t.id))
+        })
+        .sort((a, b) => (auxNocPlanned[a.id] ?? 0) - (auxNocPlanned[b.id] ?? 0))
+
+      for (const aux of eligibleForNoc) {
+        if (planned.length >= 2) break
+        planned.push(aux.id)
+        auxNocPlanned[aux.id] = (auxNocPlanned[aux.id] ?? 0) + 1
+        if (!auxPlanNocDays.has(aux.id)) auxPlanNocDays.set(aux.id, new Set())
+        auxPlanNocDays.get(aux.id)!.add(d)
+      }
+      dayNocPlan.set(dateStr, planned)
+    }
+
     // Falha 9: distribuição justa de turnos — conta quantas vezes cada turno foi atribuído a cada aux
     const auxTurnoCount: Record<string, Record<string, number>> = {}
 
@@ -438,15 +480,39 @@ export default function EscalaMensal() {
         // Fallback: se todos filtrados, usa candidatos originais (cobertura > restrição)
         if (filteredCandidates.length === 0) filteredCandidates = candidates
 
+        // Sem turno duplicado no mesmo dia: filtrar turnos já usados por outros auxiliares
+        if (!dayTurnoUsed.has(dateStr)) dayTurnoUsed.set(dateStr, new Set())
+        const usedOnDay = dayTurnoUsed.get(dateStr)!
+        let pickedCandidates = filteredCandidates.filter(t => !usedOnDay.has(t.id))
+        if (pickedCandidates.length === 0) pickedCandidates = filteredCandidates // fallback
+
+        // Regra 2 noturnos por dia
+        const nocPlanned = dayNocPlan.get(dateStr) ?? []
+        const mustBeNoc = nocPlanned.includes(aux.id)
+        const dayNocAssigned = [...usedOnDay].filter(tId => noturnoIds.has(tId)).length
+        if (mustBeNoc) {
+          const nocCands = pickedCandidates.filter(t => noturnoIds.has(t.id))
+          if (nocCands.length > 0) pickedCandidates = nocCands
+        } else if (dayNocAssigned >= 2) {
+          // Já tem 2 noturnos hoje: bloquear noturno para este auxiliar
+          const nonNocCands = pickedCandidates.filter(t => !noturnoIds.has(t.id))
+          if (nonNocCands.length > 0) pickedCandidates = nonNocCands
+        } else {
+          // Noturno ainda não atingiu 2: preferir não-noturno para deixar slot para os planeados
+          const nonNocCands = pickedCandidates.filter(t => !noturnoIds.has(t.id))
+          if (nonNocCands.length > 0) pickedCandidates = nonNocCands
+        }
+
         // Falha 9: seleção justa — turno com menor contagem para este aux
         if (!auxTurnoCount[aux.id]) auxTurnoCount[aux.id] = {}
-        const picked = filteredCandidates.sort((a, b) =>
+        const picked = pickedCandidates.sort((a, b) =>
           (auxTurnoCount[aux.id][a.id] ?? 0) - (auxTurnoCount[aux.id][b.id] ?? 0)
         )[0]
 
         payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:picked.id, codigo_especial:null })
         pending.add(`${aux.id}_${dateStr}`)
         pendingTurno.set(`${aux.id}_${dateStr}`, picked.id)
+        usedOnDay.add(picked.id)
         auxTurnoCount[aux.id][picked.id] = (auxTurnoCount[aux.id][picked.id] ?? 0) + 1
         monthCount[aux.id] = (monthCount[aux.id]??0)+1
         if (noturnoIds.has(picked.id)) {

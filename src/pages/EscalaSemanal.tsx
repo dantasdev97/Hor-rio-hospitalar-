@@ -32,8 +32,8 @@ type DayType = "weekday" | "saturday" | "sunday"
 const POSTO_SCHEDULE: Record<PostoKey, { shifts: TurnoLetra[]; days: DayType[] }> = {
   RX_URG:    { shifts: ["M","T","N"], days: ["weekday","saturday","sunday"] },
   TAC2:      { shifts: ["M","T","N"], days: ["weekday","saturday","sunday"] },
-  EXAM1:     { shifts: ["M","T"],    days: ["weekday","saturday","sunday"] },
-  EXAM2:     { shifts: ["M","T"],    days: ["weekday","saturday"] },
+  EXAM1:     { shifts: ["M","T","N"], days: ["weekday","saturday","sunday"] },
+  EXAM2:     { shifts: ["M","T","N"], days: ["weekday","saturday"] },
   TRANSPORT: { shifts: ["M","T"],    days: ["weekday","saturday","sunday"] },
   TAC1:      { shifts: ["M","T"],    days: ["weekday","saturday"] },
   SALA6:     { shifts: ["M"],        days: ["weekday","saturday","sunday"] },
@@ -124,8 +124,9 @@ export default function EscalaSemanal() {
 
   const [dialogOpen,  setDialogOpen]  = useState(false)
   const [selCell,     setSelCell]     = useState<{ data:string; turnoLetra:TurnoLetra; posto:PostoKey; tipo:PostoTipo }|null>(null)
-  const [selPersonId, setSelPersonId] = useState("")
-  const [search,      setSearch]      = useState("")
+  const [selPersonId,  setSelPersonId]  = useState("")
+  const [selPersonIds, setSelPersonIds] = useState<string[]>([]) // multi-select para TRANSPORT+M
+  const [search,       setSearch]       = useState("")
   const searchRef = useRef<HTMLInputElement>(null)
   const tableRef = useRef<HTMLTableElement>(null)
 
@@ -247,27 +248,97 @@ export default function EscalaSemanal() {
     if (!mensal?.auxiliar_id) return undefined
     return { id:`mensal_${mensal.id}`, data, posto, turno_letra:turnoLetra, auxiliar_id:mensal.auxiliar_id, doutor_id:null }
   }
+  function getFirstName(fullName: string): string {
+    return fullName.split(" ")[0]
+  }
   function getCellName(esc: EscalaRow|undefined) {
     if (!esc) return ""
-    if (esc.doutor_id)   return doutores.find(d=>d.id===esc.doutor_id)?.nome ?? ""
-    if (esc.auxiliar_id) return auxiliares.find(a=>a.id===esc.auxiliar_id)?.nome ?? ""
+    if (esc.doutor_id)   return getFirstName(doutores.find(d=>d.id===esc.doutor_id)?.nome ?? "")
+    if (esc.auxiliar_id) return getFirstName(auxiliares.find(a=>a.id===esc.auxiliar_id)?.nome ?? "")
     return ""
+  }
+  // Retorna todas as escalas para uma célula (suporta TRANSPORT+M com 2 auxiliares)
+  function getEscalas(data: string, turnoLetra: string, posto: string): EscalaRow[] {
+    const manual = escalas.filter(e => e.data===data && e.turno_letra===turnoLetra && e.posto===posto)
+    if (manual.length > 0) return manual
+    const mensalResults = mensalEntries.filter(me => {
+      if (me.data !== data || !me.auxiliar_id || !me.turno_id) return false
+      const t = turnosData.find(t => t.id === me.turno_id)
+      if (!t || !t.postos.includes(posto)) return false
+      return turnoToLetra(t) === turnoLetra
+    })
+    return mensalResults.map(me => ({
+      id: `mensal_${me.id}`, data, posto, turno_letra: turnoLetra,
+      auxiliar_id: me.auxiliar_id, doutor_id: null
+    }))
+  }
+  function isTransportDouble(posto: PostoKey, turno: TurnoLetra): boolean {
+    return posto === "TRANSPORT" && turno === "M"
+  }
+  function getCellDisplayName(data: string, turnoLetra: TurnoLetra, posto: PostoKey): string {
+    if (isTransportDouble(posto, turnoLetra)) {
+      const rows = getEscalas(data, turnoLetra, posto)
+      return rows.map(r => {
+        const name = r.auxiliar_id ? (auxiliares.find(a=>a.id===r.auxiliar_id)?.nome ?? "") : ""
+        return getFirstName(name)
+      }).filter(Boolean).join("/")
+    }
+    return getCellName(getEscala(data, turnoLetra, posto))
   }
 
   // ── Dialog ────────────────────────────────────────────────────────────────
   function openCell(data:string, turnoLetra:TurnoLetra, posto:PostoKey) {
     const tipo = getPostoTipo(posto, turnoLetra)
-    const ex   = getEscala(data, turnoLetra, posto)
     setSelCell({ data, turnoLetra, posto, tipo })
-    setSelPersonId(tipo==="doutor" ? (ex?.doutor_id??"") : (ex?.auxiliar_id??""))
+    if (isTransportDouble(posto, turnoLetra)) {
+      const rows = getEscalas(data, turnoLetra, posto)
+      setSelPersonIds(rows.map(r => r.auxiliar_id ?? "").filter(Boolean))
+      setSelPersonId("")
+    } else {
+      const ex = getEscala(data, turnoLetra, posto)
+      setSelPersonId(tipo==="doutor" ? (ex?.doutor_id??"") : (ex?.auxiliar_id??""))
+      setSelPersonIds([])
+    }
     setSearch(""); setDialogOpen(true)
     setTimeout(() => searchRef.current?.focus(), 60)
   }
   function closeDialog() { setDialogOpen(false); setSearch("") }
 
   async function saveEscala() {
-    if (!selCell || !selPersonId) return
+    if (!selCell) return
+    const isDouble = isTransportDouble(selCell.posto, selCell.turnoLetra)
+    if (!isDouble && !selPersonId) return
+    if (isDouble && selPersonIds.length === 0) return
     setSaving(true)
+
+    if (isDouble) {
+      // TRANSPORT+M: gerir até 2 auxiliares
+      const existingRows = escalas.filter(e =>
+        e.data===selCell.data && e.turno_letra===selCell.turnoLetra && e.posto===selCell.posto
+      )
+      const newIds = selPersonIds.filter(Boolean)
+      // Apagar linhas removidas
+      for (const row of existingRows) {
+        if (row.auxiliar_id && !newIds.includes(row.auxiliar_id)) {
+          await supabase.from("escalas").delete().eq("id", row.id)
+          setEscalas(p => p.filter(e => e.id !== row.id))
+        }
+      }
+      // Adicionar novas linhas
+      const existingAuxIds = existingRows.map(r => r.auxiliar_id).filter(Boolean)
+      for (const auxId of newIds) {
+        if (!existingAuxIds.includes(auxId)) {
+          const payload = { data:selCell.data, posto:selCell.posto, turno_letra:selCell.turnoLetra, tipo_escala:"semanal", status:"alocado", auxiliar_id:auxId, doutor_id:null }
+          const { data:rows } = await supabase.from("escalas").insert(payload).select("id")
+          if (rows?.length) {
+            const nr: EscalaRow = { id:rows[0].id, ...payload }
+            setEscalas(p => [...p, nr])
+          }
+        }
+      }
+      setSaving(false); closeDialog(); return
+    }
+
     const ex = getEscala(selCell.data, selCell.turnoLetra, selCell.posto)
     // Only update if it's a real semanal record (not a derived mensal row)
     const realEx = ex && !ex.id.startsWith("mensal_") ? ex : undefined
@@ -305,8 +376,17 @@ export default function EscalaSemanal() {
 
   async function clearEscala() {
     if (!selCell) return
-    const ex = getEscala(selCell.data, selCell.turnoLetra, selCell.posto)
     closeDialog()
+    if (isTransportDouble(selCell.posto, selCell.turnoLetra)) {
+      // Apagar todas as linhas desta célula TRANSPORT+M
+      const rows = escalas.filter(e =>
+        e.data===selCell.data && e.turno_letra===selCell.turnoLetra && e.posto===selCell.posto && !e.id.startsWith("mensal_")
+      )
+      setEscalas(p => p.filter(e => !rows.some(r => r.id === e.id)))
+      for (const row of rows) await supabase.from("escalas").delete().eq("id", row.id)
+      return
+    }
+    const ex = getEscala(selCell.data, selCell.turnoLetra, selCell.posto)
     // Only delete real semanal records; derived mensal rows cannot be deleted here
     if (ex && !ex.id.startsWith("mensal_")) {
       setEscalas(p=>p.filter(e=>e.id!==ex.id))
@@ -630,16 +710,19 @@ export default function EscalaSemanal() {
   }
 
   // ── Modal helpers ─────────────────────────────────────────────────────────
+  const isDouble    = selCell ? isTransportDouble(selCell.posto, selCell.turnoLetra) : false
   const personList: Person[] = selCell?.tipo==="doutor" ? doutores : auxiliares
   const filtered = personList.filter(p=>p.nome.toLowerCase().includes(search.toLowerCase()))
   const posto      = selCell ? postoInfo(selCell.posto) : null
   const accentBg   = posto?.bg==="#FFFFFF" ? "#4A90A4" : (posto?.bg ?? "#4A90A4")
   const dayIdx     = selCell ? weekDays.findIndex(d=>format(d,"yyyy-MM-dd")===selCell.data) : -1
   const dayLabel   = dayIdx>=0 ? `${format(weekDays[dayIdx],"d")} ${DIAS_PT[dayIdx]}` : ""
-  const _existingEsc = selCell ? getEscala(selCell.data,selCell.turnoLetra,selCell.posto) : undefined
+  const _existingEsc = selCell && !isDouble ? getEscala(selCell.data,selCell.turnoLetra,selCell.posto) : undefined
   // Show "Limpar" only for real semanal records; derived mensal rows cannot be cleared here
-  const hasExisting = !!(_existingEsc && !_existingEsc.id.startsWith("mensal_"))
-  const isDerived   = !!(_existingEsc?.id?.startsWith("mensal_"))
+  const hasExisting = isDouble
+    ? escalas.some(e => e.data===selCell?.data && e.turno_letra===selCell?.turnoLetra && e.posto===selCell?.posto && !e.id.startsWith("mensal_"))
+    : !!(_existingEsc && !_existingEsc.id.startsWith("mensal_"))
+  const isDerived   = !isDouble && !!(_existingEsc?.id?.startsWith("mensal_"))
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -732,12 +815,18 @@ export default function EscalaSemanal() {
                     <td style={{ border:B,backgroundColor:SHIFT_BG[turno],textAlign:"center",fontWeight:700,fontSize:"12px",padding:"2px 6px",minWidth:"26px" }}>{turno}</td>
                     {POSTOS.map(p=>{
                       const opera = postoOpera(p.key as PostoKey, turno, dateStr)
-                      const esc=opera ? getEscala(dateStr,turno,p.key) : undefined
+                      const isDouble = isTransportDouble(p.key as PostoKey, turno)
+                      const isDocCell = getPostoTipo(p.key as PostoKey, turno) === "doutor"
+                      const esc = opera && !isDouble ? getEscala(dateStr,turno,p.key) : undefined
                       const derived = esc?.id?.startsWith("mensal_")
-                      const cellName = getCellName(esc)
+                      const cellName = opera
+                        ? getCellDisplayName(dateStr, turno, p.key as PostoKey)
+                        : ""
                       const temRestr = esc?.auxiliar_id
                         ? auxTemRestricao(esc.auxiliar_id, p.key, turno, dateStr)
                         : false
+                      const isEmpty = opera && !cellName
+                      const placeholder = isDocCell && isEmpty ? "Dr. ?" : ""
                       return(
                         <td key={p.key}
                           onClick={opera ? ()=>openCell(dateStr,turno,p.key as PostoKey) : undefined}
@@ -745,16 +834,17 @@ export default function EscalaSemanal() {
                             ? "Posto não opera neste turno/dia"
                             : cellName
                               ? `${cellName}${derived?" (da escala mensal)":""}${temRestr?" ⚠️ restrição ativa":""}`
-                              : "Clique para atribuir"}
+                              : isDocCell ? "Clique para atribuir Doutor" : "Clique para atribuir"}
                           style={{ ...cellBase,
                             backgroundColor: !opera ? "#E5E7EB" : p.bg,
                             opacity: !opera ? 0.5 : derived ? 0.75 : 1,
-                            fontStyle: derived ? "italic" : "normal",
+                            fontStyle: (derived || placeholder) ? "italic" : "normal",
+                            color: placeholder ? "#9CA3AF" : "inherit",
                             cursor: !opera ? "not-allowed" : "pointer",
                             border: temRestr ? "2px solid #EF4444" : B }}
                           onMouseEnter={opera ? e=>(e.currentTarget.style.filter="brightness(0.91)") : undefined}
                           onMouseLeave={opera ? e=>(e.currentTarget.style.filter="brightness(1)") : undefined}>
-                          {opera ? cellName : "—"}
+                          {opera ? (cellName || placeholder || "") : "—"}
                         </td>
                       )
                     })}
@@ -805,6 +895,13 @@ export default function EscalaSemanal() {
               </div>
             </div>
 
+            {/* Info for TRANSPORT+M multi-select */}
+            {isDouble && (
+              <div style={{ margin:"0 20px 8px",padding:"6px 10px",background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:"8px",fontSize:"11px",color:"#1E40AF" }}>
+                Selecione até 2 auxiliares para Transportes — Manhã
+              </div>
+            )}
+
             {/* List */}
             <div style={{ maxHeight:"300px",overflowY:"auto",padding:"8px" }}>
               {filtered.length===0 ? (
@@ -812,14 +909,24 @@ export default function EscalaSemanal() {
                   {personList.length===0 ? `Nenhum ${selCell?.tipo==="doutor"?"doutor":"auxiliar"} cadastrado.` : "Nenhum resultado."}
                 </div>
               ) : filtered.map(p=>{
-                const isSel=selPersonId===p.id
+                const isSel = isDouble ? selPersonIds.includes(p.id) : selPersonId===p.id
+                const isDisabled = isDouble && !isSel && selPersonIds.length >= 2
                 const pRestr = selCell
                   ? auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data)
                   : false
+                function handleClick() {
+                  if (isDouble) {
+                    setSelPersonIds(prev =>
+                      prev.includes(p.id) ? prev.filter(id=>id!==p.id) : prev.length < 2 ? [...prev, p.id] : prev
+                    )
+                  } else {
+                    setSelPersonId(isSel ? "" : p.id)
+                  }
+                }
                 return(
-                  <button key={p.id} onClick={()=>setSelPersonId(isSel?"":p.id)}
-                    style={{ width:"100%",display:"flex",alignItems:"center",gap:"12px",padding:"9px 12px",borderRadius:"10px",border:"none",cursor:"pointer",textAlign:"left",backgroundColor:isSel?"#EBF4F8":"transparent",transition:"background-color 0.12s" }}
-                    onMouseEnter={e=>{ if(!isSel) e.currentTarget.style.backgroundColor="#F7F8FA" }}
+                  <button key={p.id} onClick={isDisabled ? undefined : handleClick} disabled={isDisabled}
+                    style={{ width:"100%",display:"flex",alignItems:"center",gap:"12px",padding:"9px 12px",borderRadius:"10px",border:"none",cursor:isDisabled?"not-allowed":"pointer",textAlign:"left",backgroundColor:isSel?"#EBF4F8":"transparent",transition:"background-color 0.12s",opacity:isDisabled?0.4:1 }}
+                    onMouseEnter={e=>{ if(!isSel&&!isDisabled) e.currentTarget.style.backgroundColor="#F7F8FA" }}
                     onMouseLeave={e=>{ if(!isSel) e.currentTarget.style.backgroundColor="transparent" }}>
                     <div style={{ width:"36px",height:"36px",borderRadius:"10px",backgroundColor:isSel?accentBg:"#E8EEF2",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:700,flexShrink:0,color:isSel?"#FFFFFF":"#5A7080",transition:"all 0.12s" }}>{getInitials(p.nome)}</div>
                     <span style={{ flex:1,fontSize:"13px",fontWeight:isSel?600:500,color:isSel?"#1A3A4A":"#333" }}>{p.nome}</span>
@@ -831,7 +938,7 @@ export default function EscalaSemanal() {
             </div>
 
             {/* Restriction warning banner */}
-            {selPersonId && selCell && auxTemRestricao(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data) && (
+            {!isDouble && selPersonId && selCell && auxTemRestricao(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data) && (
               <div style={{ margin:"0 20px 0",padding:"8px 12px",background:"#FEF3C7",border:"1px solid #FCD34D",borderRadius:"8px",fontSize:"12px",color:"#92400E",display:"flex",alignItems:"center",gap:"6px" }}>
                 ⚠️ Esta pessoa tem uma restrição ativa para este posto ou turno.
               </div>
@@ -849,12 +956,17 @@ export default function EscalaSemanal() {
               )}
               <button onClick={closeDialog} style={{ background:"#F4F4F4",border:"none",borderRadius:"8px",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#555",transition:"background 0.12s" }}
                 onMouseEnter={e=>(e.currentTarget.style.background="#E8E8E8")} onMouseLeave={e=>(e.currentTarget.style.background="#F4F4F4")}>Cancelar</button>
-              <button onClick={saveEscala} disabled={saving||!selPersonId}
-                style={{ background:selPersonId?"#1A3A4A":"#CCC",border:"none",borderRadius:"8px",padding:"7px 20px",cursor:selPersonId?"pointer":"not-allowed",fontSize:"12px",fontWeight:700,color:"#FFF",letterSpacing:"0.02em",transition:"background 0.12s" }}
-                onMouseEnter={e=>{if(selPersonId)e.currentTarget.style.background="#2A5A74"}}
-                onMouseLeave={e=>{if(selPersonId)e.currentTarget.style.background="#1A3A4A"}}>
-                {saving ? "A guardar…" : "Guardar"}
-              </button>
+              {(() => {
+                const canSave = isDouble ? selPersonIds.length > 0 : !!selPersonId
+                return (
+                  <button onClick={saveEscala} disabled={saving || !canSave}
+                    style={{ background:canSave?"#1A3A4A":"#CCC",border:"none",borderRadius:"8px",padding:"7px 20px",cursor:canSave?"pointer":"not-allowed",fontSize:"12px",fontWeight:700,color:"#FFF",letterSpacing:"0.02em",transition:"background 0.12s" }}
+                    onMouseEnter={e=>{if(canSave)e.currentTarget.style.background="#2A5A74"}}
+                    onMouseLeave={e=>{if(canSave)e.currentTarget.style.background="#1A3A4A"}}>
+                    {saving ? "A guardar…" : "Guardar"}
+                  </button>
+                )
+              })()}
             </div>
           </div>
         </div>
