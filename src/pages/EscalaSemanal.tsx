@@ -235,6 +235,36 @@ export default function EscalaSemanal() {
     })
   }
 
+  function getAuxBlockReason(
+    auxId: string,
+    posto: PostoKey,
+    turnoLetra: TurnoLetra,
+    data: string
+  ): string | null {
+    // Regra 1: Aux com turno N no mesmo dia não pode fazer turno M
+    if (turnoLetra === "M") {
+      const hasNocMensal = mensalEntries.some(me => {
+        if (me.auxiliar_id !== auxId || me.data !== data || !me.turno_id) return false
+        const t = turnosData.find(t => t.id === me.turno_id)
+        return !!(t && turnoToLetra(t) === "N")
+      })
+      const hasNocSemanal = escalas.some(e =>
+        e.auxiliar_id === auxId && e.data === data && e.turno_letra === "N"
+      )
+      if (hasNocMensal || hasNocSemanal) return "Trabalha no turno noturno neste dia"
+    }
+    // Regra 2: Aux já alocado noutro posto no mesmo dia/turno
+    for (const p of POSTOS) {
+      if (p.key === posto) continue
+      if (!postoOpera(p.key, turnoLetra, data)) continue
+      const esc = getEscala(data, turnoLetra, p.key)
+      if (esc?.auxiliar_id === auxId) {
+        return `Já alocado em ${p.label} neste turno`
+      }
+    }
+    return null
+  }
+
   function getEscala(data:string, turnoLetra:string, posto:string): EscalaRow | undefined {
     // 1. Manual semanal override takes priority
     const manual = escalas.find(e => e.data===data && e.turno_letra===turnoLetra && e.posto===posto)
@@ -337,7 +367,11 @@ export default function EscalaSemanal() {
           }
         }
       }
-      setSaving(false); closeDialog(); return
+      setSaving(false); closeDialog()
+      setToastMsg("✅ Escala guardada com sucesso")
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 2500)
+      return
     }
 
     const ex = getEscala(selCell.data, selCell.turnoLetra, selCell.posto)
@@ -372,7 +406,15 @@ export default function EscalaSemanal() {
     if (savedId) {
       const nr: EscalaRow = { id:savedId, data:selCell.data, posto:selCell.posto, turno_letra:selCell.turnoLetra, auxiliar_id:selCell.tipo==="auxiliar"?selPersonId:null, doutor_id:selCell.tipo==="doutor"?selPersonId:null }
       setEscalas(p => realEx ? p.map(e=>e.id===realEx.id?nr:e) : [...p,nr])
-    } else fetchAll()
+      setToastMsg("✅ Escala guardada com sucesso")
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 2500)
+    } else {
+      fetchAll()
+      setToastMsg("❌ Erro ao guardar. Dados recarregados.")
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 3000)
+    }
   }
 
   async function clearEscala() {
@@ -714,9 +756,21 @@ export default function EscalaSemanal() {
   const isDouble    = selCell ? isTransportDouble(selCell.posto, selCell.turnoLetra) : false
   const personList: Person[] = selCell?.tipo==="doutor" ? doutores : auxiliares
   const searchFiltered = personList.filter(p=>p.nome.toLowerCase().includes(search.toLowerCase()))
+  const auxBlockReasons = new Map<string, string | null>(
+    searchFiltered.map(p => [
+      p.id,
+      (selCell && selCell.tipo !== "doutor")
+        ? getAuxBlockReason(p.id, selCell.posto, selCell.turnoLetra, selCell.data)
+        : null
+    ])
+  )
   const availableList = searchFiltered.filter(p => selCell ? !auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data) : true)
   const restrictedList = searchFiltered.filter(p => selCell ? auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data) : false)
-  const filtered = filterTab === "available" ? availableList : restrictedList
+  const baseFiltered = filterTab === "available" ? availableList : restrictedList
+  // Blocked (operacional) shown last within each tab
+  const filtered = [...baseFiltered].sort((a, b) =>
+    Number(!!(auxBlockReasons.get(a.id))) - Number(!!(auxBlockReasons.get(b.id)))
+  )
   const posto      = selCell ? postoInfo(selCell.posto) : null
   const accentBg   = posto?.bg==="#FFFFFF" ? "#4A90A4" : (posto?.bg ?? "#4A90A4")
   const dayIdx     = selCell ? weekDays.findIndex(d=>format(d,"yyyy-MM-dd")===selCell.data) : -1
@@ -929,12 +983,19 @@ export default function EscalaSemanal() {
             {/* List */}
             <div style={{ maxHeight:"300px",overflowY:"auto",padding:"8px" }}>
               {filtered.length===0 ? (
-                <div style={{ padding:"32px 16px",textAlign:"center",fontSize:"13px",color:"#AAA" }}>
-                  {personList.length===0 ? `Nenhum ${selCell?.tipo==="doutor"?"doutor":"auxiliar"} cadastrado.` : "Nenhum resultado."}
+                <div style={{ padding:"24px 16px",textAlign:"center",fontSize:"13px",color:"#AAA" }}>
+                  {personList.length===0
+                    ? `Nenhum ${selCell?.tipo==="doutor"?"doutor":"auxiliar"} cadastrado.`
+                    : filterTab==="available"
+                      ? "Nenhum auxiliar disponível neste turno."
+                      : "Nenhum auxiliar com restrição encontrado."}
                 </div>
               ) : filtered.map(p=>{
                 const isSel = isDouble ? selPersonIds.includes(p.id) : selPersonId===p.id
-                const isDisabled = isDouble && !isSel && selPersonIds.length >= 2
+                const isDisabledMulti = isDouble && !isSel && selPersonIds.length >= 2
+                const blockReason = auxBlockReasons.get(p.id) ?? null
+                const isBlocked = !!blockReason
+                const isDisabledFinal = isBlocked || isDisabledMulti
                 const pRestr = selCell
                   ? auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data)
                   : false
@@ -948,25 +1009,39 @@ export default function EscalaSemanal() {
                   }
                 }
                 return(
-                  <button key={p.id} onClick={isDisabled ? undefined : handleClick} disabled={isDisabled}
-                    style={{ width:"100%",display:"flex",alignItems:"center",gap:"12px",padding:"9px 12px",borderRadius:"10px",border:"none",cursor:isDisabled?"not-allowed":"pointer",textAlign:"left",backgroundColor:isSel?"#EBF4F8":"transparent",transition:"background-color 0.12s",opacity:isDisabled?0.4:1 }}
-                    onMouseEnter={e=>{ if(!isSel&&!isDisabled) e.currentTarget.style.backgroundColor="#F7F8FA" }}
+                  <button key={p.id} onClick={isDisabledFinal ? undefined : handleClick} disabled={isDisabledFinal}
+                    style={{ width:"100%",display:"flex",alignItems:"center",gap:"12px",padding:"9px 12px",borderRadius:"10px",border:"none",cursor:isDisabledFinal?"not-allowed":"pointer",textAlign:"left",backgroundColor:isSel?"#EBF4F8":"transparent",transition:"background-color 0.12s",opacity:isBlocked?0.45:isDisabledMulti?0.4:1 }}
+                    onMouseEnter={e=>{ if(!isSel&&!isDisabledFinal) e.currentTarget.style.backgroundColor="#F7F8FA" }}
                     onMouseLeave={e=>{ if(!isSel) e.currentTarget.style.backgroundColor="transparent" }}>
-                    <div style={{ width:"36px",height:"36px",borderRadius:"10px",backgroundColor:isSel?accentBg:"#E8EEF2",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:700,flexShrink:0,color:isSel?"#FFFFFF":"#5A7080",transition:"all 0.12s" }}>{getInitials(p.nome)}</div>
-                    <span style={{ flex:1,fontSize:"13px",fontWeight:isSel?600:500,color:isSel?"#1A3A4A":"#333" }}>{p.nome}</span>
-                    {pRestr && <span title="Restrição ativa para este posto/turno" style={{ fontSize:"14px" }}>⚠️</span>}
+                    <div style={{ width:"36px",height:"36px",borderRadius:"10px",backgroundColor:isSel?accentBg:isBlocked?"#F3F4F6":"#E8EEF2",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:700,flexShrink:0,color:isSel?"#FFFFFF":isBlocked?"#9CA3AF":"#5A7080",transition:"all 0.12s" }}>{getInitials(p.nome)}</div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:"13px",fontWeight:isSel?600:500,color:isSel?"#1A3A4A":isBlocked?"#9CA3AF":"#333" }}>{p.nome}</div>
+                      {blockReason && <div style={{ fontSize:"10px",color:"#EF4444",marginTop:"1px" }}>{blockReason}</div>}
+                    </div>
+                    {pRestr && !isBlocked && <span title="Restrição ativa para este posto/turno" style={{ fontSize:"14px" }}>⚠️</span>}
+                    {isBlocked && <span title={blockReason ?? ""} style={{ fontSize:"14px" }}>🔒</span>}
                     {isSel && <div style={{ width:"22px",height:"22px",borderRadius:"50%",backgroundColor:accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}><Check size={13} color="#FFF" strokeWidth={2.5}/></div>}
                   </button>
                 )
               })}
             </div>
 
-            {/* Restriction warning banner */}
-            {!isDouble && selPersonId && selCell && auxTemRestricao(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data) && (
-              <div style={{ margin:"0 20px 0",padding:"8px 12px",background:"#FEF3C7",border:"1px solid #FCD34D",borderRadius:"8px",fontSize:"12px",color:"#92400E",display:"flex",alignItems:"center",gap:"6px" }}>
-                ⚠️ Esta pessoa tem uma restrição ativa para este posto ou turno.
-              </div>
-            )}
+            {/* Warning banners — bloqueio operacional ou restrição de política */}
+            {!isDouble && selPersonId && selCell && (() => {
+              const bReason = getAuxBlockReason(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data)
+              const hasRestr = auxTemRestricao(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data)
+              if (bReason) return (
+                <div style={{ margin:"0 20px",padding:"8px 12px",background:"#FEE2E2",border:"1px solid #FCA5A5",borderRadius:"8px",fontSize:"12px",color:"#991B1B",display:"flex",alignItems:"center",gap:"6px" }}>
+                  🔒 {bReason} — este auxiliar não deveria ser alocado neste turno.
+                </div>
+              )
+              if (hasRestr) return (
+                <div style={{ margin:"0 20px",padding:"8px 12px",background:"#FEF3C7",border:"1px solid #FCD34D",borderRadius:"8px",fontSize:"12px",color:"#92400E",display:"flex",alignItems:"center",gap:"6px" }}>
+                  ⚠️ Este auxiliar tem uma restrição ativa para este posto ou turno.
+                </div>
+              )
+              return null
+            })()}
 
             {/* Footer */}
             <div style={{ padding:"14px 20px 20px",borderTop:"1px solid #F0F0F0",display:"flex",gap:"8px",justifyContent:"flex-end",alignItems:"center",flexWrap:"wrap" }}>
