@@ -34,6 +34,29 @@ function loadCfg() {
   catch { return DEFAULT_CFG }
 }
 
+// ─── Helpers de turno noturno e descanso ─────────────────────────────────────
+function isNoturnoTurno(t: Turno): boolean {
+  // Usa horario_inicio se disponível; senão recai no nome
+  if (t.horario_inicio && t.horario_inicio !== "00:00") return t.horario_inicio >= "20:00"
+  return t.nome.toUpperCase().startsWith("N")
+}
+function toMinutes(time: string): number {
+  const [h, m] = time.split(":").map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+// Calcula horas de descanso entre fim do turno anterior (dia d) e início do turno seguinte (dia d+1)
+function restHoursBetween(prev: { horario_inicio: string; horario_fim: string }, nextInicio: string): number {
+  if (!prev.horario_inicio || !prev.horario_fim || !nextInicio) return 24
+  const prevStart = toMinutes(prev.horario_inicio)
+  const prevEnd   = toMinutes(prev.horario_fim)
+  const nextStart = toMinutes(nextInicio)
+  // Turno noturno cruza meia-noite (fim < inicio), ex: N 21:00–07:00
+  // O fim já está no dia d+1, portanto o gap é simples
+  const crossesDay = prevEnd < prevStart
+  const gapMin = crossesDay ? nextStart - prevEnd : nextStart + 1440 - prevEnd
+  return gapMin / 60
+}
+
 function deriveTurnoColor(nome: string): { bg: string; text: string } {
   const n = nome.toUpperCase()
   if (n.startsWith("MT"))  return { bg: "#BAE6FD", text: "#0C4A6E" }
@@ -175,6 +198,22 @@ export default function EscalaMensal() {
   }
   useEffect(() => { fetchAll() }, [year, month])
 
+  // ── Realtime: detecta mudanças vindas da escala semanal (reverse sync) ─────
+  useEffect(() => {
+    const channel = supabase
+      .channel(`mensal-live-${year}-${month}`)
+      .on('postgres_changes', { event:'*', schema:'public', table:'escalas' },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as { data?: string; tipo_escala?: string } | undefined
+          if (row?.tipo_escala === 'mensal' && row?.data) {
+            const d = new Date(row.data + 'T12:00:00')
+            if (d.getFullYear() === year && d.getMonth() === month) fetchAll()
+          }
+        })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [year, month])
+
   // ── Helpers ───────────────────────────────────────────────────────────────
   function mkDateStr(day: number) { return `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}` }
   function getEscala(auxId: string, day: number) { return escalas.find(e => e.auxiliar_id===auxId && e.data===mkDateStr(day)) }
@@ -236,7 +275,7 @@ export default function EscalaMensal() {
     const endOfMonthStr   = `${year}-${String(month+1).padStart(2,"0")}-${String(daysInMonth).padStart(2,"0")}`
 
     const [{ data: restricoes }, { data: ausenciasMes }] = await Promise.all([
-      supabase.from("restricoes").select("auxiliar_id,turno_id"),
+      supabase.from("restricoes").select("auxiliar_id,turno_id,data_inicio,data_fim"),
       supabase.from("ausencias").select("auxiliar_id,codigo,data_inicio,data_fim")
         .lte("data_inicio", endOfMonthStr)
         .gte("data_fim",    startOfMonthStr),
@@ -250,6 +289,8 @@ export default function EscalaMensal() {
     const turnoRestr: Record<string, Set<string>> = {}
     for (const r of (restricoes ?? [])) {
       if (!r.turno_id) continue
+      if (r.data_fim   && r.data_fim   < startOfMonthStr) continue
+      if (r.data_inicio && r.data_inicio > endOfMonthStr)  continue
       if (!turnoRestr[r.auxiliar_id]) turnoRestr[r.auxiliar_id] = new Set()
       turnoRestr[r.auxiliar_id].add(r.turno_id)
     }
@@ -265,46 +306,32 @@ export default function EscalaMensal() {
       }
     }
 
-    const noturnoIds = new Set(turnos.filter(t => t.nome.toUpperCase().startsWith("N")).map(t => t.id))
+    const noturnoIds = new Set(turnos.filter(isNoturnoTurno).map(t => t.id))
 
-    type WKey = string
-    const wkCount: Record<string, Record<WKey,number>> = {}
-    const wkNoc:   Record<string, Record<WKey,number>> = {}
-
-    // Pre-count existing escalas
-    for (const e of escalas) {
-      if (!e.auxiliar_id || !e.turno_id) continue
-      const d = parseInt(e.data.substring(8,10))
-      const wk: WKey = `${e.data.substring(0,7)}-w${Math.floor((d-1)/7)}`
-      if (!wkCount[e.auxiliar_id]) wkCount[e.auxiliar_id]={}
-      wkCount[e.auxiliar_id][wk] = (wkCount[e.auxiliar_id][wk]??0)+1
-      if (noturnoIds.has(e.turno_id)) {
-        if (!wkNoc[e.auxiliar_id]) wkNoc[e.auxiliar_id]={}
-        wkNoc[e.auxiliar_id][wk] = (wkNoc[e.auxiliar_id][wk]??0)+1
-        wkNoc[e.auxiliar_id]["__month__"] = (wkNoc[e.auxiliar_id]["__month__"]??0)+1
-      }
+    // Helper: get shift letter (M/T/N) for a turno
+    function getTurnoLetra(t: Turno): "M" | "T" | "N" | null {
+      if (isNoturnoTurno(t)) return "N"
+      const n = t.nome.toUpperCase()
+      if (n.startsWith("MT")) return null
+      if (n.startsWith("M")) return "M"
+      if (n.startsWith("T")) return "T"
+      return null
     }
 
-    // Monthly count per aux for fair weekend distribution
-    const monthCount: Record<string,number> = Object.fromEntries(
-      auxiliares.map(a => [a.id, escalas.filter(e=>e.auxiliar_id===a.id&&e.turno_id).length])
-    )
+    // Required worker counts per shift letter for each day-of-week
+    // Dom-Dom: RX_URG(M,T,N) + TAC2(M,T,N) + EXAM1(M,T) = N:2, M:3, T:3
+    // Seg-Sáb: + TAC1(M,T) + EXAM2(M,T) + SALA6(M) + SALA7(M,T) + TRANSPORT(M,T) = N:2, M:8, T:7
+    function getRequiredCounts(dow: number): { N: number; M: number; T: number } {
+      if (dow === 0) return { N: 2, M: 3, T: 3 }  // Sunday
+      return { N: 2, M: 8, T: 7 }                  // Mon–Sat
+    }
 
     type PayloadRow = { auxiliar_id:string; data:string; tipo_escala:string; status:string; turno_id:string|null; codigo_especial:string|null }
     const payloads: PayloadRow[] = []
     const pending = new Set<string>() // `${auxId}_${dateStr}`
 
-    // Night shift on day d → D on d-1 (rest before), D on d+1, F on d+2
+    // Night shift on day d → D on d+1, F on d+2
     function addDescansoFolga(auxId: string, d: number) {
-      // D before night shift
-      if (d > 1) {
-        const pd = mkDateStr(d-1); const k0 = `${auxId}_${pd}`
-        if (!ausBlocked.has(k0) && !escalas.find(e=>e.auxiliar_id===auxId&&e.data===pd) && !pending.has(k0)) {
-          payloads.push({ auxiliar_id:auxId, data:pd, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:"D" })
-          pending.add(k0)
-        }
-      }
-      // D after night shift
       if (d < daysInMonth) {
         const nd = mkDateStr(d+1); const k1 = `${auxId}_${nd}`
         if (!ausBlocked.has(k1) && !escalas.find(e=>e.auxiliar_id===auxId&&e.data===nd) && !pending.has(k1)) {
@@ -312,7 +339,6 @@ export default function EscalaMensal() {
           pending.add(k1)
         }
       }
-      // F two days after
       if (d+1 < daysInMonth) {
         const fd = mkDateStr(d+2); const k2 = `${auxId}_${fd}`
         if (!ausBlocked.has(k2) && !escalas.find(e=>e.auxiliar_id===auxId&&e.data===fd) && !pending.has(k2)) {
@@ -322,68 +348,92 @@ export default function EscalaMensal() {
       }
     }
 
-    // ── Todos os dias do mês (Seg–Dom, 24/7) ────────────────────────────────
-    for (const aux of sortedAuxiliares) {
-      const restricted = turnoRestr[aux.id] ?? new Set<string>()
-      const available = turnos.filter(t => !restricted.has(t.id))
-      if (available.length === 0) continue
+    // ── Coverage-first pre-planning ───────────────────────────────────────────
+    // dayShiftPlan: dateStr → Map<auxId, turnoId>
+    const dayShiftPlan = new Map<string, Map<string, string>>()
+    // auxBlockedDays: auxId → Set<dayNum> — days blocked by post-nocturno rest
+    const auxBlockedDays = new Map<string, Set<number>>()
+    const auxNocCount: Record<string, number> = Object.fromEntries(sortedAuxiliares.map(a => [a.id, 0]))
+    // Fair distribution counter: how many shifts each aux has been pre-planned so far
+    const auxPlanCount: Record<string, number> = Object.fromEntries(sortedAuxiliares.map(a => [a.id, 0]))
+    const nocMensalPlan = (cfg as typeof DEFAULT_CFG).maxTurnosNoturnosMes ?? DEFAULT_CFG.maxTurnosNoturnosMes
 
-      for (const d of days) {
-        const dateStr = mkDateStr(d)
-        const dow = getDay(new Date(year, month, d))
+    for (const d of days) {
+      const dateStr = mkDateStr(d)
+      const dow = getDay(new Date(year, month, d))
+      const required = getRequiredCounts(dow)
+      const planForDay = new Map<string, string>()
+      const usedTurnoIds = new Set<string>()
 
-        if ((dow === 0 || dow === 6) && aux.trabalha_fds === false) {
-          // Preenche fim de semana com Folga para quem não trabalha FDS
-          const k = `${aux.id}_${dateStr}`
-          if (!ausBlocked.has(k) && !escalas.find(e=>e.auxiliar_id===aux.id&&e.data===dateStr) && !pending.has(k)) {
-            payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:"F" })
-            pending.add(k)
+      for (const letra of ["N", "M", "T"] as const) {
+        const needed = required[letra]
+
+        const eligible = sortedAuxiliares
+          .filter(aux => {
+            if ((dow === 0 || dow === 6) && aux.trabalha_fds === false) return false
+            if (ausBlocked.has(`${aux.id}_${dateStr}`)) return false
+            if (escalas.find(e => e.auxiliar_id === aux.id && e.data === dateStr)) return false
+            if (planForDay.has(aux.id)) return false
+            const blocked = auxBlockedDays.get(aux.id) ?? new Set<number>()
+            if (blocked.has(d)) return false
+            if (letra === "N" && auxNocCount[aux.id] >= nocMensalPlan) return false
+            const restricted = turnoRestr[aux.id] ?? new Set<string>()
+            return turnos.some(t => getTurnoLetra(t) === letra && !restricted.has(t.id) && !usedTurnoIds.has(t.id))
+          })
+          .sort((a, b) => {
+            // For nocturno: sort by least nocturno count; for M/T: by least total planned
+            if (letra === "N") return (auxNocCount[a.id] ?? 0) - (auxNocCount[b.id] ?? 0)
+            return (auxPlanCount[a.id] ?? 0) - (auxPlanCount[b.id] ?? 0)
+          })
+
+        let assigned = 0
+        for (const aux of eligible) {
+          if (assigned >= needed) break
+          const restricted = turnoRestr[aux.id] ?? new Set<string>()
+          const availTurno = turnos.find(t =>
+            getTurnoLetra(t) === letra && !restricted.has(t.id) && !usedTurnoIds.has(t.id)
+          )
+          if (!availTurno) continue
+
+          planForDay.set(aux.id, availTurno.id)
+          usedTurnoIds.add(availTurno.id)
+          auxPlanCount[aux.id] = (auxPlanCount[aux.id] ?? 0) + 1
+          assigned++
+
+          if (letra === "N") {
+            auxNocCount[aux.id] = (auxNocCount[aux.id] ?? 0) + 1
+            if (!auxBlockedDays.has(aux.id)) auxBlockedDays.set(aux.id, new Set())
+            const blocked = auxBlockedDays.get(aux.id)!
+            blocked.add(d + 1)  // D after nocturno
+            blocked.add(d + 2)  // F two days after
           }
-          continue
-        }
-
-        // Bloqueia dias de ausência registados
-        if (ausBlocked.has(`${aux.id}_${dateStr}`)) continue
-
-        const ex = escalas.find(e => e.auxiliar_id===aux.id && e.data===dateStr)
-        if (ex) continue
-        if (pending.has(`${aux.id}_${dateStr}`)) continue
-
-        // Limite mensal atingido → preenche com Folga
-        const mensal = (cfg as typeof DEFAULT_CFG).maxTurnosMes ?? DEFAULT_CFG.maxTurnosMes
-        if ((monthCount[aux.id]??0) >= mensal) {
-          const k = `${aux.id}_${dateStr}`
-          if (!ausBlocked.has(k) && !pending.has(k)) {
-            payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:"F" })
-            pending.add(k)
-          }
-          continue
-        }
-
-        const wk: WKey = `${dateStr.substring(0,7)}-w${Math.floor((d-1)/7)}`
-        if (!wkNoc[aux.id]) wkNoc[aux.id]={}
-        const nocMensal = (cfg as typeof DEFAULT_CFG).maxTurnosNoturnosMes ?? DEFAULT_CFG.maxTurnosNoturnosMes
-        const nocExceeded = (wkNoc[aux.id][wk]??0) >= cfg.maxTurnosNoturnos
-        const nocMonthlyExceeded = (wkNoc[aux.id]["__month__"]??0) >= nocMensal
-        const candidates = (nocExceeded || nocMonthlyExceeded) ? available.filter(t=>!noturnoIds.has(t.id)) : available
-        if (candidates.length === 0) continue
-
-        const picked = candidates[(d + aux.id.charCodeAt(0)) % candidates.length]
-        payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:picked.id, codigo_especial:null })
-        pending.add(`${aux.id}_${dateStr}`)
-        monthCount[aux.id] = (monthCount[aux.id]??0)+1
-        if (noturnoIds.has(picked.id)) {
-          wkNoc[aux.id][wk] = (wkNoc[aux.id][wk]??0)+1
-          wkNoc[aux.id]["__month__"] = (wkNoc[aux.id]["__month__"]??0)+1
-          addDescansoFolga(aux.id, d)
         }
       }
 
-      // Varredura final: preenche qualquer célula ainda em branco com Folga
+      dayShiftPlan.set(dateStr, planForDay)
+    }
+
+    // ── Main loop: assign from plan or give Folga ─────────────────────────────
+    for (const aux of sortedAuxiliares) {
       for (const d of days) {
         const dateStr = mkDateStr(d)
         const k = `${aux.id}_${dateStr}`
-        if (!ausBlocked.has(k) && !escalas.find(e=>e.auxiliar_id===aux.id&&e.data===dateStr) && !pending.has(k)) {
+
+        if (ausBlocked.has(k)) continue
+        if (escalas.find(e => e.auxiliar_id === aux.id && e.data === dateStr)) continue
+        if (pending.has(k)) continue
+
+        const dow = getDay(new Date(year, month, d))
+        const planForDay = dayShiftPlan.get(dateStr)
+        const plannedTurnoId = planForDay?.get(aux.id)
+
+        if (plannedTurnoId) {
+          payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:plannedTurnoId, codigo_especial:null })
+          pending.add(k)
+          if (noturnoIds.has(plannedTurnoId)) addDescansoFolga(aux.id, d)
+        } else {
+          // Not needed today → Folga (skip if weekend and aux doesn't work weekends)
+          if ((dow === 0 || dow === 6) && aux.trabalha_fds === false) continue
           payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:"F" })
           pending.add(k)
         }

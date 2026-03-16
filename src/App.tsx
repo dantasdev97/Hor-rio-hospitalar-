@@ -9,6 +9,7 @@ import Restricoes from "@/pages/Restricoes"
 import EscalaSemanal from "@/pages/EscalaSemanal"
 import EscalaMensal from "@/pages/EscalaMensal"
 import Configuracoes from "@/pages/Configuracoes"
+import VincularTurnoPosto from "@/pages/VincularTurnoPosto"
 
 // ─── Loading screen while session resolves ───────────────────────────────────
 function LoadingScreen() {
@@ -71,6 +72,7 @@ function AppRoutes() {
         <Route path="escala-semanal" element={<EscalaSemanal />} />
         <Route path="auxiliares" element={<Auxiliares />} />
         <Route path="turnos" element={<Turnos />} />
+        <Route path="turno-postos" element={<VincularTurnoPosto />} />
         <Route path="doutores" element={<Doutores />} />
         <Route path="restricoes" element={<Restricoes />} />
         <Route path="configuracoes" element={<Configuracoes />} />

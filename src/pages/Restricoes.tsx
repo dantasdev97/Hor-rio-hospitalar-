@@ -23,6 +23,19 @@ const POSTOS = [
 
 type PostoKey = (typeof POSTOS)[number]["key"]
 
+const TURNO_LETRAS = ["M", "T", "N"] as const
+type TurnoLetra = (typeof TURNO_LETRAS)[number]
+
+function turnoParaLetra(t: { nome: string; horario_inicio: string }): TurnoLetra | null {
+  const n = t.nome.toUpperCase()
+  const isNoc = t.horario_inicio >= "20:00"
+  if (isNoc || n.startsWith("N")) return "N"
+  if (n.startsWith("MT")) return null
+  if (n.startsWith("M")) return "M"
+  if (n.startsWith("T")) return "T"
+  return null
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type FilterMode = "all" | "with" | "without"
@@ -106,11 +119,19 @@ interface AuxiliarCardProps {
   restricoesCount: number
   isRestritoTurno: (turnoId: string) => boolean
   isRestritoPosto: (posto: string) => boolean
+  isRestritoCombinado: (postoKey: string, turnoId: string) => boolean
   onToggleTurno: (turnoId: string) => void
   onTogglePosto: (posto: string) => void
+  onToggleCombinado: (postoKey: string, turnoId: string) => void
 }
 
-function AuxiliarCard({ aux, turnos, restricoesCount, isRestritoTurno, isRestritoPosto, onToggleTurno, onTogglePosto }: AuxiliarCardProps) {
+function AuxiliarCard({ aux, turnos, restricoesCount, isRestritoTurno, isRestritoPosto, isRestritoCombinado, onToggleTurno, onTogglePosto, onToggleCombinado }: AuxiliarCardProps) {
+  // Build a map: turnoLetra → first turnoId that matches
+  const turnoIdByLetra = TURNO_LETRAS.reduce((acc, letra) => {
+    const found = turnos.find(t => turnoParaLetra(t) === letra)
+    if (found) acc[letra] = found.id
+    return acc
+  }, {} as Partial<Record<TurnoLetra, string>>)
   return (
     <Card className="transition-shadow hover:shadow-md">
       <CardHeader className="pb-3 px-5 pt-5">
@@ -174,6 +195,60 @@ function AuxiliarCard({ aux, turnos, restricoesCount, isRestritoTurno, isRestrit
             </div>
           </div>
         )}
+
+        {/* Matriz Combinada Posto × Turno */}
+        {Object.keys(turnoIdByLetra).length > 0 && (
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+              Restrições por Posto + Turno
+            </p>
+            <p className="text-xs text-gray-400 mb-3">
+              Bloquear uma combinação específica posto/turno sem bloquear o posto ou turno inteiro.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr>
+                    <th className="text-left py-1 pr-3 font-medium text-gray-500 min-w-[120px]">Posto</th>
+                    {TURNO_LETRAS.filter(l => turnoIdByLetra[l]).map(letra => (
+                      <th key={letra} className="text-center px-2 py-1 font-semibold text-gray-600 w-12">
+                        {letra}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {POSTOS.map(posto => (
+                    <tr key={posto.key} className="border-t border-gray-100">
+                      <td className="py-1.5 pr-3 font-medium text-gray-700 text-xs">{posto.label}</td>
+                      {TURNO_LETRAS.filter(l => turnoIdByLetra[l]).map(letra => {
+                        const tId = turnoIdByLetra[letra]!
+                        const restrito = isRestritoCombinado(posto.key, tId)
+                        return (
+                          <td key={letra} className="text-center px-2 py-1">
+                            <button
+                              onClick={() => onToggleCombinado(posto.key, tId)}
+                              title={restrito
+                                ? `Remover bloqueio ${posto.label} — ${letra}`
+                                : `Bloquear ${posto.label} — ${letra}`}
+                              className={`w-8 h-7 rounded text-xs font-bold transition-all border ${
+                                restrito
+                                  ? "bg-red-100 border-red-300 text-red-700 hover:bg-red-200"
+                                  : "bg-gray-100 border-gray-200 text-gray-400 hover:bg-gray-200"
+                              }`}
+                            >
+                              {restrito ? "✕" : "–"}
+                            </button>
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -223,11 +298,11 @@ export default function Restricoes() {
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   function getRestricaoTurnoId(auxiliarId: string, turnoId: string): string | undefined {
-    return restricoes.find(r => r.auxiliar_id === auxiliarId && r.turno_id === turnoId)?.id
+    return restricoes.find(r => r.auxiliar_id === auxiliarId && r.turno_id === turnoId && !r.posto)?.id
   }
 
   function getRestricaoPostoId(auxiliarId: string, posto: string): string | undefined {
-    return restricoes.find(r => r.auxiliar_id === auxiliarId && r.posto === posto)?.id
+    return restricoes.find(r => r.auxiliar_id === auxiliarId && r.posto === posto && !r.turno_id)?.id
   }
 
   function getRestricaoCount(auxiliarId: string): number {
@@ -258,6 +333,27 @@ export default function Restricoes() {
       const { data } = await supabase
         .from("restricoes")
         .insert({ auxiliar_id: auxiliarId, turno_id: null, posto })
+        .select()
+        .single()
+      if (data) setRestricoes(prev => [...prev, data])
+    }
+  }
+
+  function getRestricaoCombinadaId(auxiliarId: string, posto: string, turnoId: string): string | undefined {
+    return restricoes.find(r =>
+      r.auxiliar_id === auxiliarId && r.posto === posto && r.turno_id === turnoId
+    )?.id
+  }
+
+  async function toggleRestricaoCombinada(auxiliarId: string, postoKey: string, turnoId: string) {
+    const existingId = getRestricaoCombinadaId(auxiliarId, postoKey, turnoId)
+    if (existingId) {
+      await supabase.from("restricoes").delete().eq("id", existingId)
+      setRestricoes(prev => prev.filter(r => r.id !== existingId))
+    } else {
+      const { data } = await supabase
+        .from("restricoes")
+        .insert({ auxiliar_id: auxiliarId, posto: postoKey, turno_id: turnoId })
         .select()
         .single()
       if (data) setRestricoes(prev => [...prev, data])
@@ -398,8 +494,10 @@ export default function Restricoes() {
               restricoesCount={getRestricaoCount(aux.id)}
               isRestritoTurno={(turnoId) => !!getRestricaoTurnoId(aux.id, turnoId)}
               isRestritoPosto={(posto)   => !!getRestricaoPostoId(aux.id, posto)}
+              isRestritoCombinado={(postoKey, turnoId) => !!getRestricaoCombinadaId(aux.id, postoKey, turnoId)}
               onToggleTurno={(turnoId)  => toggleRestricaoTurno(aux.id, turnoId)}
               onTogglePosto={(posto)    => toggleRestricaoPosto(aux.id, posto)}
+              onToggleCombinado={(postoKey, turnoId) => toggleRestricaoCombinada(aux.id, postoKey, turnoId)}
             />
           ))}
         </div>

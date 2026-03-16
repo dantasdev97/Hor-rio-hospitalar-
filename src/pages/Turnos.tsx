@@ -15,6 +15,17 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 
+const POSTOS_OPTIONS = [
+  { key: "RX_URG",    label: "RX URG" },
+  { key: "TAC1",      label: "TAC 1" },
+  { key: "TAC2",      label: "TAC 2" },
+  { key: "EXAM1",     label: "Exames Comp. (1)" },
+  { key: "EXAM2",     label: "Exames Comp. (2)" },
+  { key: "SALA6",     label: "SALA 6 BB" },
+  { key: "SALA7",     label: "SALA 7 EXT" },
+  { key: "TRANSPORT", label: "Transportes INT/URG" },
+] as const
+
 // Paleta de cores que corresponde às cores do Excel da escala
 const COLOR_PALETTE = [
   { hex: "#FEF08A", label: "Amarelo – Manhã (M)" },
@@ -43,6 +54,7 @@ export default function Turnos() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Turno | null>(null)
   const [selectedColor, setSelectedColor] = useState<string>("")
+  const [selectedPostos, setSelectedPostos] = useState<string[]>([])
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -60,6 +72,7 @@ export default function Turnos() {
   function openNew() {
     setEditing(null)
     setSelectedColor("")
+    setSelectedPostos([])
     reset({ nome: "", horario_inicio: "", horario_fim: "" })
     setDialogOpen(true)
   }
@@ -67,6 +80,7 @@ export default function Turnos() {
   function openEdit(turno: Turno) {
     setEditing(turno)
     setSelectedColor(turno.cor ?? "")
+    setSelectedPostos(turno.postos ?? [])
     reset({
       nome: turno.nome,
       horario_inicio: turno.horario_inicio,
@@ -75,12 +89,19 @@ export default function Turnos() {
     setDialogOpen(true)
   }
 
+  function togglePosto(key: string) {
+    setSelectedPostos(prev =>
+      prev.includes(key) ? prev.filter(p => p !== key) : [...prev, key]
+    )
+  }
+
   async function onSubmit(data: FormData) {
     const payload = {
       nome: data.nome,
       horario_inicio: data.horario_inicio,
       horario_fim: data.horario_fim,
       cor: selectedColor || null,
+      postos: selectedPostos,
     }
     if (editing) {
       await supabase.from("turnos").update(payload).eq("id", editing.id)
@@ -123,6 +144,7 @@ export default function Turnos() {
               <TableRow>
                 <TableHead>Código</TableHead>
                 <TableHead>Horário</TableHead>
+                <TableHead>Postos</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
@@ -139,6 +161,12 @@ export default function Turnos() {
                   </TableCell>
                   <TableCell className="text-gray-600">
                     {turno.horario_inicio.slice(0, 5)} – {turno.horario_fim.slice(0, 5)}
+                  </TableCell>
+                  <TableCell className="text-gray-600 text-sm">
+                    {(turno.postos ?? []).length === 0
+                      ? <span className="text-gray-400 italic">—</span>
+                      : (turno.postos ?? []).map(pk => POSTOS_OPTIONS.find(p => p.key === pk)?.label ?? pk).join(", ")
+                    }
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-2">
@@ -218,6 +246,25 @@ export default function Turnos() {
                   </span>
                 </div>
               )}
+            </div>
+            <div className="space-y-2">
+              <Label>Postos associados</Label>
+              <div className="grid grid-cols-2 gap-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                {POSTOS_OPTIONS.map(p => (
+                  <label key={p.key} className="flex items-center gap-2 cursor-pointer select-none text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedPostos.includes(p.key)}
+                      onChange={() => togglePosto(p.key)}
+                      className="rounded border-gray-300"
+                    />
+                    {p.label}
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500">
+                Pessoa com este turno na escala mensal aparece automaticamente neste(s) posto(s) na semanal.
+              </p>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
