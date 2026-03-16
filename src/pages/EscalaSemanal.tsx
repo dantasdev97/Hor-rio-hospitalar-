@@ -126,6 +126,8 @@ export default function EscalaSemanal() {
   const [selCell,     setSelCell]     = useState<{ data:string; turnoLetra:TurnoLetra; posto:PostoKey; tipo:PostoTipo }|null>(null)
   const [selPersonId,  setSelPersonId]  = useState("")
   const [selPersonIds, setSelPersonIds] = useState<string[]>([]) // multi-select para TRANSPORT+M
+  const [selOriginalId, setSelOriginalId] = useState("")          // id pré-carregado ao abrir modal
+  const [modalTouched,  setModalTouched]  = useState(false)       // utilizador interagiu com modal
   const [search,       setSearch]       = useState("")
   const [filterTab,    setFilterTab]    = useState<"available" | "restricted">("available")
   const searchRef = useRef<HTMLInputElement>(null)
@@ -235,6 +237,29 @@ export default function EscalaSemanal() {
     })
   }
 
+  // Retorna descrição legível da restrição activa (ex: "este posto (RX URG)" ou "este turno (M)")
+  function getRestricaoDescricao(auxId: string, posto: string, turnoLetra: string, date: string): string {
+    const postoLabel = POSTOS.find(p => p.key === posto)?.label ?? posto
+    for (const r of restricoes) {
+      if (r.auxiliar_id !== auxId) continue
+      if (r.data_fim   && r.data_fim   < date) continue
+      if (r.data_inicio && r.data_inicio > date) continue
+      if (r.posto && r.posto !== posto) continue
+      if (r.posto && r.turno_id) {
+        const t = turnosData.find(t => t.id === r.turno_id)
+        if (t && turnoToLetra(t) === turnoLetra)
+          return `este posto e turno (${postoLabel}-${turnoLetra})`
+      } else if (r.posto) {
+        return `este posto (${postoLabel})`
+      } else if (r.turno_id) {
+        const t = turnosData.find(t => t.id === r.turno_id)
+        if (t && turnoToLetra(t) === turnoLetra)
+          return `este turno (${turnoLetra})`
+      }
+    }
+    return "este posto ou turno"
+  }
+
   function getAuxBlockReason(
     auxId: string,
     posto: PostoKey,
@@ -325,21 +350,52 @@ export default function EscalaSemanal() {
       const rows = getEscalas(data, turnoLetra, posto)
       setSelPersonIds(rows.map(r => r.auxiliar_id ?? "").filter(Boolean))
       setSelPersonId("")
+      setSelOriginalId("")
     } else {
       const ex = getEscala(data, turnoLetra, posto)
-      setSelPersonId(tipo==="doutor" ? (ex?.doutor_id??"") : (ex?.auxiliar_id??""))
+      const preloadId = tipo==="doutor" ? (ex?.doutor_id??"") : (ex?.auxiliar_id??"")
+      setSelPersonId(preloadId)
+      setSelOriginalId(preloadId)
       setSelPersonIds([])
     }
-    setSearch(""); setFilterTab("available"); setDialogOpen(true)
+    setSearch(""); setFilterTab("available"); setModalTouched(false); setDialogOpen(true)
     setTimeout(() => searchRef.current?.focus(), 60)
   }
-  function closeDialog() { setDialogOpen(false); setSearch(""); setFilterTab("available") }
+  function closeDialog() {
+    setDialogOpen(false); setSearch(""); setFilterTab("available")
+    setSelOriginalId(""); setModalTouched(false)
+  }
 
   async function saveEscala() {
     if (!selCell) return
     const isDouble = isTransportDouble(selCell.posto, selCell.turnoLetra)
     if (!isDouble && !selPersonId) return
     if (isDouble && selPersonIds.length === 0) return
+
+    // ── Hard-block: aux não pode estar em 2+ postos no mesmo turno ──────────
+    if (selCell.tipo === "auxiliar") {
+      if (!isDouble && selPersonId) {
+        const bReason = getAuxBlockReason(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data)
+        if (bReason) {
+          const nome = auxiliares.find(a => a.id === selPersonId)?.nome ?? "Auxiliar"
+          setToastMsg(`❌ ${nome} — ${bReason}. Não é possível guardar.`)
+          setShowToast(true); setTimeout(() => setShowToast(false), 3500)
+          return
+        }
+      }
+      if (isDouble) {
+        for (const auxId of selPersonIds) {
+          const bReason = getAuxBlockReason(auxId, selCell.posto, selCell.turnoLetra, selCell.data)
+          if (bReason) {
+            const nome = auxiliares.find(a => a.id === auxId)?.nome ?? "Auxiliar"
+            setToastMsg(`❌ ${nome} — ${bReason}. Não é possível guardar.`)
+            setShowToast(true); setTimeout(() => setShowToast(false), 3500)
+            return
+          }
+        }
+      }
+    }
+
     setSaving(true)
 
     if (isDouble) {
@@ -399,6 +455,8 @@ export default function EscalaSemanal() {
             tipo_escala: "mensal", turno_id: matchedTurno.id, status: "alocado"
           })
         }
+        // Actualiza estado local dos entries mensais para reflectir o sync imediatamente
+        await refetchMensalEntries()
       }
     }
 
@@ -435,6 +493,20 @@ export default function EscalaSemanal() {
       setEscalas(p=>p.filter(e=>e.id!==ex.id))
       const {error}=await supabase.from("escalas").delete().eq("id",ex.id)
       if(error) fetchAll()
+    }
+  }
+
+  // Insere override semanal com null para anular a derivação do mensal
+  async function clearDerivedOverride() {
+    if (!selCell) return
+    closeDialog()
+    const payload = { data:selCell.data, posto:selCell.posto, turno_letra:selCell.turnoLetra, tipo_escala:"semanal", status:"alocado", auxiliar_id:null as string|null, doutor_id:null as string|null }
+    const { data:rows } = await supabase.from("escalas").insert(payload).select("id")
+    if (rows?.length) {
+      const nr: EscalaRow = { id:rows[0].id, ...payload }
+      setEscalas(p => [...p, nr])
+    } else {
+      fetchAll()
     }
   }
 
@@ -946,7 +1018,7 @@ export default function EscalaSemanal() {
               <div style={{ marginTop:"14px",display:"flex",alignItems:"center",gap:"8px",background:"#F7F8FA",borderRadius:"10px",padding:"8px 12px",border:"1.5px solid #EBEBEB",transition:"border-color 0.15s" }}
                 onFocusCapture={e=>(e.currentTarget.style.borderColor=accentBg)} onBlurCapture={e=>(e.currentTarget.style.borderColor="#EBEBEB")}>
                 <Search size={14} color="#999" style={{ flexShrink:0 }}/>
-                <input ref={searchRef} type="text" value={search} onChange={e=>setSearch(e.target.value)}
+                <input ref={searchRef} type="text" value={search} onChange={e=>{ setSearch(e.target.value); setModalTouched(true) }}
                   placeholder={`Pesquisar ${selCell?.tipo==="doutor"?"doutor(a)":"auxiliar"}…`}
                   style={{ border:"none",background:"transparent",outline:"none",fontSize:"13px",width:"100%",color:"#1A1A2E" }}/>
                 {search && <button onClick={()=>setSearch("")} style={{ background:"none",border:"none",cursor:"pointer",padding:0 }}><X size={13} color="#AAA"/></button>}
@@ -957,14 +1029,14 @@ export default function EscalaSemanal() {
             {selCell?.tipo !== "doutor" && (
               <div style={{ display:"flex",gap:"6px",padding:"8px 20px 0" }}>
                 <button
-                  onClick={()=>setFilterTab("available")}
+                  onClick={()=>{ setFilterTab("available"); setModalTouched(true) }}
                   style={{ flex:1,padding:"6px 0",borderRadius:"8px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,transition:"all 0.15s",
                     background:filterTab==="available"?"#1A3A4A":"#F4F4F4",
                     color:filterTab==="available"?"#FFF":"#555" }}>
                   Disponíveis ({availableList.length})
                 </button>
                 <button
-                  onClick={()=>setFilterTab("restricted")}
+                  onClick={()=>{ setFilterTab("restricted"); setModalTouched(true) }}
                   style={{ flex:1,padding:"6px 0",borderRadius:"8px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,transition:"all 0.15s",
                     background:filterTab==="restricted"?"#DC2626":"#F4F4F4",
                     color:filterTab==="restricted"?"#FFF":"#555" }}>
@@ -1028,30 +1100,49 @@ export default function EscalaSemanal() {
 
             {/* Warning banners — bloqueio operacional ou restrição de política */}
             {!isDouble && selPersonId && selCell && (() => {
+              const isChanged = selPersonId !== selOriginalId
               const bReason = getAuxBlockReason(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data)
               const hasRestr = auxTemRestricao(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data)
-              if (bReason) return (
+              const auxNome = auxiliares.find(a => a.id === selPersonId)?.nome ?? "Auxiliar"
+              if (bReason && isChanged) return (
                 <div style={{ margin:"0 20px",padding:"8px 12px",background:"#FEE2E2",border:"1px solid #FCA5A5",borderRadius:"8px",fontSize:"12px",color:"#991B1B",display:"flex",alignItems:"center",gap:"6px" }}>
-                  🔒 {bReason} — este auxiliar não deveria ser alocado neste turno.
+                  🔒 {bReason} — <strong>{auxNome}</strong> não pode ser alocado neste turno.
                 </div>
               )
-              if (hasRestr) return (
-                <div style={{ margin:"0 20px",padding:"8px 12px",background:"#FEF3C7",border:"1px solid #FCD34D",borderRadius:"8px",fontSize:"12px",color:"#92400E",display:"flex",alignItems:"center",gap:"6px" }}>
-                  ⚠️ Este auxiliar tem uma restrição ativa para este posto ou turno.
+              if (bReason && !isChanged) return (
+                <div style={{ margin:"0 20px",padding:"8px 12px",background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:"8px",fontSize:"12px",color:"#9A3412",display:"flex",alignItems:"center",gap:"6px" }}>
+                  ℹ️ Atenção: <strong>{auxNome}</strong> — {bReason}.
                 </div>
               )
+              if (hasRestr) {
+                const tipoRestr = getRestricaoDescricao(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data)
+                return (
+                  <div style={{ margin:"0 20px",padding:"8px 12px",background:"#FEF3C7",border:"1px solid #FCD34D",borderRadius:"8px",fontSize:"12px",color:"#92400E",display:"flex",alignItems:"center",gap:"6px" }}>
+                    ⚠️ <strong>{auxNome}</strong> tem {tipoRestr} bloqueado.
+                  </div>
+                )
+              }
               return null
             })()}
 
             {/* Footer */}
             <div style={{ padding:"14px 20px 20px",borderTop:"1px solid #F0F0F0",display:"flex",gap:"8px",justifyContent:"flex-end",alignItems:"center",flexWrap:"wrap" }}>
-              {isDerived && (
-                <span style={{ marginRight:"auto",fontSize:"11px",color:"#9CA3AF",fontStyle:"italic" }}>Da escala mensal — override manual possível</span>
+              {/* Hint when nothing selected and user has interacted */}
+              {modalTouched && !isDouble && !selPersonId && selCell?.tipo !== "doutor" && (
+                <span style={{ marginRight:"auto",fontSize:"11px",color:"#9CA3AF" }}>↑ Selecione um auxiliar para guardar</span>
               )}
+              {/* Remove existing semanal entry */}
               {hasExisting && (
                 <button onClick={clearEscala} style={{ marginRight:"auto",background:"none",border:"1.5px solid #FFCDD2",borderRadius:"8px",padding:"7px 14px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#E57373",transition:"all 0.12s" }}
                   onMouseEnter={e=>{e.currentTarget.style.background="#FFF5F5";e.currentTarget.style.borderColor="#E57373"}}
-                  onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#FFCDD2"}}>Limpar</button>
+                  onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#FFCDD2"}}>Remover</button>
+              )}
+              {/* Remove mensal-derived entry via override */}
+              {isDerived && !hasExisting && !isDouble && (
+                <button onClick={clearDerivedOverride} style={{ marginRight:"auto",background:"none",border:"1.5px solid #FED7AA",borderRadius:"8px",padding:"7px 14px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#C2410C",transition:"all 0.12s" }}
+                  title="Cria override para anular a derivação do mensal"
+                  onMouseEnter={e=>{e.currentTarget.style.background="#FFF7ED";e.currentTarget.style.borderColor="#C2410C"}}
+                  onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#FED7AA"}}>Remover (mensal)</button>
               )}
               <button onClick={closeDialog} style={{ background:"#F4F4F4",border:"none",borderRadius:"8px",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#555",transition:"background 0.12s" }}
                 onMouseEnter={e=>(e.currentTarget.style.background="#E8E8E8")} onMouseLeave={e=>(e.currentTarget.style.background="#F4F4F4")}>Cancelar</button>
