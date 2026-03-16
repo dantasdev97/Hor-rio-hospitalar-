@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { format, startOfWeek, addDays } from "date-fns"
+import { format, startOfWeek, addDays, getDay, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { ChevronLeft, ChevronRight, Search, X, Check, FileDown, MessageCircle, Loader2, Trash2, RotateCcw, Printer, Loader, Info } from "lucide-react"
 import html2pdf from "html2pdf.js"
@@ -27,6 +27,18 @@ const POSTOS = [
   { key:"TRANSPORT", label:"Transportes INT/URG", bg:"#FFBE7B" },
 ] as const
 type PostoKey = (typeof POSTOS)[number]["key"]
+
+type DayType = "weekday" | "saturday" | "sunday"
+const POSTO_SCHEDULE: Record<PostoKey, { shifts: TurnoLetra[]; days: DayType[] }> = {
+  RX_URG:    { shifts: ["M","T","N"], days: ["weekday","saturday","sunday"] },
+  TAC2:      { shifts: ["M","T","N"], days: ["weekday","saturday","sunday"] },
+  EXAM1:     { shifts: ["M","T"],    days: ["weekday","saturday","sunday"] },
+  EXAM2:     { shifts: ["M","T"],    days: ["weekday","saturday"] },
+  TRANSPORT: { shifts: ["M","T"],    days: ["weekday","saturday","sunday"] },
+  TAC1:      { shifts: ["M","T"],    days: ["weekday","saturday"] },
+  SALA6:     { shifts: ["M"],        days: ["weekday","saturday","sunday"] },
+  SALA7:     { shifts: ["M","T"],    days: ["weekday","saturday","sunday"] },
+}
 
 function getPostoTipo(posto: PostoKey, turno: TurnoLetra): PostoTipo {
   return (posto === "EXAM1" || posto === "EXAM2") && turno === "N" ? "doutor" : "auxiliar"
@@ -186,16 +198,37 @@ export default function EscalaSemanal() {
     return null
   }
 
+  function postoOpera(posto: PostoKey, turno: TurnoLetra, dateStr: string): boolean {
+    const rule = POSTO_SCHEDULE[posto]
+    if (!rule) return true
+    if (!rule.shifts.includes(turno)) return false
+    const d = getDay(parseISO(dateStr))  // 0=Dom, 6=Sáb
+    const dayType: DayType = d === 0 ? "sunday" : d === 6 ? "saturday" : "weekday"
+    return rule.days.includes(dayType)
+  }
+
   function auxTemRestricao(auxId: string, posto: string, turnoLetra: string, date: string): boolean {
     return restricoes.some(r => {
       if (r.auxiliar_id !== auxId) return false
       if (r.data_fim   && r.data_fim   < date) return false
       if (r.data_inicio && r.data_inicio > date) return false
-      if (r.posto && r.posto === posto) return true
-      if (r.turno_id) {
-        const t = turnosData.find(t => t.id === r.turno_id)
-        if (t && turnoToLetra(t) === turnoLetra) return true
+
+      if (r.posto) {
+        if (r.posto !== posto) return false  // posto diferente → não aplica
+        if (r.turno_id) {
+          // Restrição combinada: posto E turno têm de coincidir
+          const t = turnosData.find(t => t.id === r.turno_id)
+          return !!(t && turnoToLetra(t) === turnoLetra)
+        }
+        return true  // restrição só de posto → aplica a todos os turnos
       }
+
+      if (r.turno_id) {
+        // Restrição só de turno → aplica a todos os postos
+        const t = turnosData.find(t => t.id === r.turno_id)
+        return !!(t && turnoToLetra(t) === turnoLetra)
+      }
+
       return false
     })
   }
@@ -698,24 +731,30 @@ export default function EscalaSemanal() {
                     </td>}
                     <td style={{ border:B,backgroundColor:SHIFT_BG[turno],textAlign:"center",fontWeight:700,fontSize:"12px",padding:"2px 6px",minWidth:"26px" }}>{turno}</td>
                     {POSTOS.map(p=>{
-                      const esc=getEscala(dateStr,turno,p.key)
+                      const opera = postoOpera(p.key as PostoKey, turno, dateStr)
+                      const esc=opera ? getEscala(dateStr,turno,p.key) : undefined
                       const derived = esc?.id?.startsWith("mensal_")
                       const cellName = getCellName(esc)
                       const temRestr = esc?.auxiliar_id
                         ? auxTemRestricao(esc.auxiliar_id, p.key, turno, dateStr)
                         : false
                       return(
-                        <td key={p.key} onClick={()=>openCell(dateStr,turno,p.key as PostoKey)}
-                          title={cellName
-                            ? `${cellName}${derived?" (da escala mensal)":""}${temRestr?" ⚠️ restrição ativa":""}`
-                            : "Clique para atribuir"}
-                          style={{ ...cellBase, backgroundColor:p.bg,
-                            opacity: derived ? 0.75 : 1,
+                        <td key={p.key}
+                          onClick={opera ? ()=>openCell(dateStr,turno,p.key as PostoKey) : undefined}
+                          title={!opera
+                            ? "Posto não opera neste turno/dia"
+                            : cellName
+                              ? `${cellName}${derived?" (da escala mensal)":""}${temRestr?" ⚠️ restrição ativa":""}`
+                              : "Clique para atribuir"}
+                          style={{ ...cellBase,
+                            backgroundColor: !opera ? "#E5E7EB" : p.bg,
+                            opacity: !opera ? 0.5 : derived ? 0.75 : 1,
                             fontStyle: derived ? "italic" : "normal",
+                            cursor: !opera ? "not-allowed" : "pointer",
                             border: temRestr ? "2px solid #EF4444" : B }}
-                          onMouseEnter={e=>(e.currentTarget.style.filter="brightness(0.91)")}
-                          onMouseLeave={e=>(e.currentTarget.style.filter="brightness(1)")}>
-                          {cellName}
+                          onMouseEnter={opera ? e=>(e.currentTarget.style.filter="brightness(0.91)") : undefined}
+                          onMouseLeave={opera ? e=>(e.currentTarget.style.filter="brightness(1)") : undefined}>
+                          {opera ? cellName : "—"}
                         </td>
                       )
                     })}
