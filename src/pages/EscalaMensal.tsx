@@ -471,7 +471,8 @@ export default function EscalaMensal() {
       const dow = getDay(new Date(year, month, d))
       const required = getRequiredCounts(dow)
       const planForDay = new Map<string, string>()
-      const usedTurnoIds = new Set<string>()
+      // Track usage count per turno (allows same turno for multiple aux, e.g. 2×N5)
+      const turnoUsageCount = new Map<string, number>()
 
       for (const letra of ["N", "M", "T"] as const) {
         const needed = required[letra]
@@ -486,7 +487,8 @@ export default function EscalaMensal() {
             if (blocked.has(d)) return false
             if (letra === "N" && auxNocCount[aux.id] >= nocMensalPlan) return false
             const restricted = turnoRestr[aux.id] ?? new Set<string>()
-            return turnos.some(t => getTurnoLetra(t) === letra && !restricted.has(t.id) && !usedTurnoIds.has(t.id))
+            // Allow reuse of same turno (e.g. 2 aux on N5): no turno exclusivity check
+            return turnos.some(t => getTurnoLetra(t) === letra && !restricted.has(t.id))
           })
           .sort((a, b) => {
             // For nocturno: sort by least nocturno count; for M/T: by least total planned
@@ -498,13 +500,14 @@ export default function EscalaMensal() {
         for (const aux of eligible) {
           if (assigned >= needed) break
           const restricted = turnoRestr[aux.id] ?? new Set<string>()
-          const availTurno = turnos.find(t =>
-            getTurnoLetra(t) === letra && !restricted.has(t.id) && !usedTurnoIds.has(t.id)
-          )
+          // Prefer turnos with least usage today for fair distribution
+          const availTurno = turnos
+            .filter(t => getTurnoLetra(t) === letra && !restricted.has(t.id))
+            .sort((a, b) => (turnoUsageCount.get(a.id) ?? 0) - (turnoUsageCount.get(b.id) ?? 0))[0]
           if (!availTurno) continue
 
           planForDay.set(aux.id, availTurno.id)
-          usedTurnoIds.add(availTurno.id)
+          turnoUsageCount.set(availTurno.id, (turnoUsageCount.get(availTurno.id) ?? 0) + 1)
           auxPlanCount[aux.id] = (auxPlanCount[aux.id] ?? 0) + 1
           assigned++
 

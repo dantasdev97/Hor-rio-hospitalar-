@@ -129,7 +129,7 @@ export default function EscalaSemanal() {
   const [selOriginalId, setSelOriginalId] = useState("")          // id pré-carregado ao abrir modal
   const [modalTouched,  setModalTouched]  = useState(false)       // utilizador interagiu com modal
   const [search,       setSearch]       = useState("")
-  const [filterTab,    setFilterTab]    = useState<"available" | "restricted">("available")
+  const [filterTab,    setFilterTab]    = useState<"available" | "restricted" | "allocated">("available")
   const searchRef = useRef<HTMLInputElement>(null)
   const tableRef = useRef<HTMLTableElement>(null)
 
@@ -266,8 +266,9 @@ export default function EscalaSemanal() {
     turnoLetra: TurnoLetra,
     data: string
   ): string | null {
-    // Regra 1: Aux com turno N no mesmo dia não pode fazer turno M
-    if (turnoLetra === "M") {
+    const cfg = loadCfg()
+    // Regra 1: Aux com turno N no mesmo dia não pode fazer turno M (só se bloquearTurnosConsecutivos)
+    if (turnoLetra === "M" && cfg.bloquearTurnosConsecutivos) {
       const hasNocMensal = mensalEntries.some(me => {
         if (me.auxiliar_id !== auxId || me.data !== data || !me.turno_id) return false
         const t = turnosData.find(t => t.id === me.turno_id)
@@ -278,13 +279,15 @@ export default function EscalaSemanal() {
       )
       if (hasNocMensal || hasNocSemanal) return "Trabalha no turno noturno neste dia"
     }
-    // Regra 2: Aux já alocado noutro posto no mesmo dia/turno
-    for (const p of POSTOS) {
-      if (p.key === posto) continue
-      if (!postoOpera(p.key, turnoLetra, data)) continue
-      const esc = getEscala(data, turnoLetra, p.key)
-      if (esc?.auxiliar_id === auxId) {
-        return `Já alocado em ${p.label} neste turno`
+    // Regra 2: Aux já alocado noutro posto no mesmo dia/turno (só se alertasConflito)
+    if (cfg.alertasConflito) {
+      for (const p of POSTOS) {
+        if (p.key === posto) continue
+        if (!postoOpera(p.key, turnoLetra, data)) continue
+        const esc = getEscala(data, turnoLetra, p.key)
+        if (esc?.auxiliar_id === auxId) {
+          return `Já alocado em ${p.label} neste turno`
+        }
       }
     }
     return null
@@ -294,15 +297,27 @@ export default function EscalaSemanal() {
     // 1. Manual semanal override takes priority
     const manual = escalas.find(e => e.data===data && e.turno_letra===turnoLetra && e.posto===posto)
     if (manual) return manual
-    // 2. Derive from mensal: find an aux whose turno covers this posto and produces this turno letter
-    const mensal = mensalEntries.find(me => {
+    // 2. Derive from mensal: find aux whose turno covers this posto and turnoLetra
+    const candidates = mensalEntries.filter(me => {
       if (me.data !== data || !me.auxiliar_id || !me.turno_id) return false
       const t = turnosData.find(t => t.id === me.turno_id)
       if (!t || !t.postos.includes(posto)) return false
       return turnoToLetra(t) === turnoLetra
     })
-    if (!mensal?.auxiliar_id) return undefined
-    return { id:`mensal_${mensal.id}`, data, posto, turno_letra:turnoLetra, auxiliar_id:mensal.auxiliar_id, doutor_id:null }
+    if (!candidates.length) return undefined
+    if (candidates.length === 1) {
+      const me = candidates[0]
+      return { id:`mensal_${me.id}`, data, posto, turno_letra:turnoLetra, auxiliar_id:me.auxiliar_id, doutor_id:null }
+    }
+    // Multiple candidates (e.g. 2 aux with same N turno for different postos):
+    // assign by the posto's position among all postos covered by these candidates for this turnoLetra
+    const coveredPostos = POSTOS
+      .filter(p => candidates.some(me => turnosData.find(t => t.id === me.turno_id)?.postos.includes(p.key)))
+      .map(p => p.key)
+    const postoIdx = coveredPostos.indexOf(posto as PostoKey)
+    const idx = postoIdx >= 0 && postoIdx < candidates.length ? postoIdx : 0
+    const me = candidates[idx]
+    return { id:`mensal_${me.id}`, data, posto, turno_letra:turnoLetra, auxiliar_id:me.auxiliar_id, doutor_id:null }
   }
   function getFirstName(fullName: string): string {
     return fullName.split(" ")[0]
@@ -493,20 +508,31 @@ export default function EscalaSemanal() {
       setEscalas(p=>p.filter(e=>e.id!==ex.id))
       const {error}=await supabase.from("escalas").delete().eq("id",ex.id)
       if(error) fetchAll()
+      // Also remove the corresponding mensal entry for this aux+date
+      const auxId = ex.auxiliar_id
+      if (auxId) {
+        const mensalEntry = mensalEntries.find(me => me.auxiliar_id === auxId && me.data === selCell.data)
+        if (mensalEntry) {
+          await supabase.from("escalas").delete().eq("id", mensalEntry.id)
+          setMensalEntries(p => p.filter(me => me.id !== mensalEntry.id))
+        }
+      }
     }
   }
 
-  // Insere override semanal com null para anular a derivação do mensal
+  // Remove a derivação do mensal apagando o registo mensal real
   async function clearDerivedOverride() {
     if (!selCell) return
+    // Find the derived entry to get the aux id
+    const ex = getEscala(selCell.data, selCell.turnoLetra, selCell.posto)
+    const auxId = ex?.auxiliar_id
     closeDialog()
-    const payload = { data:selCell.data, posto:selCell.posto, turno_letra:selCell.turnoLetra, tipo_escala:"semanal", status:"alocado", auxiliar_id:null as string|null, doutor_id:null as string|null }
-    const { data:rows } = await supabase.from("escalas").insert(payload).select("id")
-    if (rows?.length) {
-      const nr: EscalaRow = { id:rows[0].id, ...payload }
-      setEscalas(p => [...p, nr])
-    } else {
-      fetchAll()
+    if (auxId) {
+      const mensalEntry = mensalEntries.find(me => me.auxiliar_id === auxId && me.data === selCell.data)
+      if (mensalEntry) {
+        await supabase.from("escalas").delete().eq("id", mensalEntry.id)
+        setMensalEntries(p => p.filter(me => me.id !== mensalEntry.id))
+      }
     }
   }
 
@@ -838,7 +864,15 @@ export default function EscalaSemanal() {
   )
   const availableList = searchFiltered.filter(p => selCell ? !auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data) : true)
   const restrictedList = searchFiltered.filter(p => selCell ? auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data) : false)
-  const baseFiltered = filterTab === "available" ? availableList : restrictedList
+  const allocatedTodayList = selCell
+    ? searchFiltered.filter(p =>
+        escalas.some(e => e.auxiliar_id === p.id && e.data === selCell.data) ||
+        mensalEntries.some(me => me.auxiliar_id === p.id && me.data === selCell.data)
+      )
+    : []
+  const baseFiltered = filterTab === "available" ? availableList
+    : filterTab === "restricted" ? restrictedList
+    : allocatedTodayList
   // Blocked (operacional) shown last within each tab
   const filtered = [...baseFiltered].sort((a, b) =>
     Number(!!(auxBlockReasons.get(a.id))) - Number(!!(auxBlockReasons.get(b.id)))
@@ -1036,6 +1070,13 @@ export default function EscalaSemanal() {
                   Disponíveis ({availableList.length})
                 </button>
                 <button
+                  onClick={()=>{ setFilterTab("allocated"); setModalTouched(true) }}
+                  style={{ flex:1,padding:"6px 0",borderRadius:"8px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,transition:"all 0.15s",
+                    background:filterTab==="allocated"?"#B45309":"#F4F4F4",
+                    color:filterTab==="allocated"?"#FFF":"#555" }}>
+                  Alocados hoje ({allocatedTodayList.length})
+                </button>
+                <button
                   onClick={()=>{ setFilterTab("restricted"); setModalTouched(true) }}
                   style={{ flex:1,padding:"6px 0",borderRadius:"8px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,transition:"all 0.15s",
                     background:filterTab==="restricted"?"#DC2626":"#F4F4F4",
@@ -1060,7 +1101,9 @@ export default function EscalaSemanal() {
                     ? `Nenhum ${selCell?.tipo==="doutor"?"doutor":"auxiliar"} cadastrado.`
                     : filterTab==="available"
                       ? "Nenhum auxiliar disponível neste turno."
-                      : "Nenhum auxiliar com restrição encontrado."}
+                      : filterTab==="restricted"
+                        ? "Nenhum auxiliar com restrição encontrado."
+                        : "Nenhum auxiliar alocado hoje."}
                 </div>
               ) : filtered.map(p=>{
                 const isSel = isDouble ? selPersonIds.includes(p.id) : selPersonId===p.id
@@ -1104,21 +1147,17 @@ export default function EscalaSemanal() {
               const bReason = getAuxBlockReason(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data)
               const hasRestr = auxTemRestricao(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data)
               const auxNome = auxiliares.find(a => a.id === selPersonId)?.nome ?? "Auxiliar"
+              // Só mostrar bloqueio quando o aux foi alterado (evita ruído para o aux já atribuído)
               if (bReason && isChanged) return (
                 <div style={{ margin:"0 20px",padding:"8px 12px",background:"#FEE2E2",border:"1px solid #FCA5A5",borderRadius:"8px",fontSize:"12px",color:"#991B1B",display:"flex",alignItems:"center",gap:"6px" }}>
                   🔒 {bReason} — <strong>{auxNome}</strong> não pode ser alocado neste turno.
                 </div>
               )
-              if (bReason && !isChanged) return (
-                <div style={{ margin:"0 20px",padding:"8px 12px",background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:"8px",fontSize:"12px",color:"#9A3412",display:"flex",alignItems:"center",gap:"6px" }}>
-                  ℹ️ Atenção: <strong>{auxNome}</strong> — {bReason}.
-                </div>
-              )
-              if (hasRestr) {
+              if (hasRestr && isChanged) {
                 const tipoRestr = getRestricaoDescricao(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data)
                 return (
                   <div style={{ margin:"0 20px",padding:"8px 12px",background:"#FEF3C7",border:"1px solid #FCD34D",borderRadius:"8px",fontSize:"12px",color:"#92400E",display:"flex",alignItems:"center",gap:"6px" }}>
-                    ⚠️ <strong>{auxNome}</strong> tem {tipoRestr} bloqueado.
+                    ⚠️ <strong>{auxNome}</strong> tem {tipoRestr} — verifique antes de guardar.
                   </div>
                 )
               }
