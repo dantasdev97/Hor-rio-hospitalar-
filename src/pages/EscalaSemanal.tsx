@@ -62,6 +62,7 @@ interface MensalEntry { id:string; data:string; auxiliar_id:string|null; turno_i
 interface TurnoComPostos { id:string; nome:string; horario_inicio:string; horario_fim:string; postos:string[] }
 interface UndoState { inserted:EscalaRow[]; deleted:EscalaRow[] }
 interface Person { id:string; nome:string; trabalha_fds?: boolean }
+interface Restricao { id:string; auxiliar_id:string; turno_id:string|null; posto:string|null; motivo:string|null; data_inicio:string|null; data_fim:string|null }
 
 // ─── Table styles ─────────────────────────────────────────────────────────────
 const B = "1px solid #BBBBBB"
@@ -101,6 +102,7 @@ export default function EscalaSemanal() {
   const [saving,        setSaving]        = useState(false)
   const [mensalEntries, setMensalEntries] = useState<MensalEntry[]>([])
   const [turnosData,    setTurnosData]    = useState<TurnoComPostos[]>([])
+  const [restricoes,    setRestricoes]    = useState<Restricao[]>([])
   const [sharingWA,     setSharingWA]     = useState(false)
   const [showToast,  setShowToast]  = useState(false)
   const [toastMsg,   setToastMsg]   = useState("")
@@ -123,7 +125,7 @@ export default function EscalaSemanal() {
   // ── Fetch ─────────────────────────────────────────────────────────────────
   async function fetchAll() {
     setLoading(true)
-    const [{ data:a },{ data:d },{ data:e },{ data:m },{ data:t }] = await Promise.all([
+    const [{ data:a },{ data:d },{ data:e },{ data:m },{ data:t },{ data:r }] = await Promise.all([
       supabase.from("auxiliares").select("id,nome,trabalha_fds").eq("disponivel",true).order("nome"),
       supabase.from("doutores").select("id,nome").order("nome"),
       supabase.from("escalas").select("id,data,posto,turno_letra,auxiliar_id,doutor_id")
@@ -135,15 +137,43 @@ export default function EscalaSemanal() {
         .gte("data",startDate).lte("data",endDate)
         .not("turno_id","is",null),
       supabase.from("turnos").select("id,nome,horario_inicio,horario_fim,postos"),
+      supabase.from("restricoes").select("id,auxiliar_id,turno_id,posto,motivo,data_inicio,data_fim"),
     ])
     setAuxiliares(a ?? [])
     setDoutores(d ?? [])
     setEscalas(e ?? [])
     setMensalEntries(m ?? [])
     setTurnosData((t ?? []).map(x => ({ ...x, postos: (x.postos as string[] | null) ?? [] })))
+    setRestricoes(r ?? [])
     setLoading(false)
   }
+
+  // Refetch rápido só das entradas mensais (triggado pelo Realtime)
+  async function refetchMensalEntries() {
+    const { data: m } = await supabase
+      .from("escalas").select("id,data,auxiliar_id,turno_id")
+      .eq("tipo_escala","mensal")
+      .gte("data",startDate).lte("data",endDate)
+      .not("turno_id","is",null)
+    if (m) setMensalEntries(m)
+  }
+
   useEffect(() => { fetchAll() }, [startDate])
+
+  // ── Realtime: mensal → semanal ─────────────────────────────────────────────
+  useEffect(() => {
+    const channel = supabase
+      .channel(`semanal-sync-${startDate}`)
+      .on('postgres_changes', { event:'*', schema:'public', table:'escalas' },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as { data?: string; tipo_escala?: string } | undefined
+          if (row?.tipo_escala === 'mensal' && row?.data && row.data >= startDate && row.data <= endDate) {
+            refetchMensalEntries()
+          }
+        })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [startDate, endDate])
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function turnoToLetra(t: TurnoComPostos): TurnoLetra | null {
@@ -154,6 +184,20 @@ export default function EscalaSemanal() {
     if (n.startsWith("M")) return "M"
     if (n.startsWith("T")) return "T"
     return null
+  }
+
+  function auxTemRestricao(auxId: string, posto: string, turnoLetra: string, date: string): boolean {
+    return restricoes.some(r => {
+      if (r.auxiliar_id !== auxId) return false
+      if (r.data_fim   && r.data_fim   < date) return false
+      if (r.data_inicio && r.data_inicio > date) return false
+      if (r.posto && r.posto === posto) return true
+      if (r.turno_id) {
+        const t = turnosData.find(t => t.id === r.turno_id)
+        if (t && turnoToLetra(t) === turnoLetra) return true
+      }
+      return false
+    })
   }
 
   function getEscala(data:string, turnoLetra:string, posto:string): EscalaRow | undefined {
@@ -198,6 +242,27 @@ export default function EscalaSemanal() {
     let savedId: string|null = null
     if (realEx) { const {error}=await supabase.from("escalas").update(payload).eq("id",realEx.id); if(!error) savedId=realEx.id }
     else { const {data:rows,error}=await supabase.from("escalas").insert(payload).select("id"); if(!error&&rows?.length) savedId=rows[0].id }
+
+    // ── Reverse sync: semanal override → upsert registo mensal correspondente ──
+    if (savedId && selCell.tipo === "auxiliar") {
+      const matchedTurno = turnosData.find(t =>
+        t.postos.includes(selCell.posto) && turnoToLetra(t) === selCell.turnoLetra
+      )
+      if (matchedTurno) {
+        const exMensal = mensalEntries.find(
+          m => m.auxiliar_id === selPersonId && m.data === selCell.data
+        )
+        if (exMensal) {
+          await supabase.from("escalas").update({ turno_id: matchedTurno.id }).eq("id", exMensal.id)
+        } else {
+          await supabase.from("escalas").insert({
+            auxiliar_id: selPersonId, data: selCell.data,
+            tipo_escala: "mensal", turno_id: matchedTurno.id, status: "alocado"
+          })
+        }
+      }
+    }
+
     setSaving(false); closeDialog()
     if (savedId) {
       const nr: EscalaRow = { id:savedId, data:selCell.data, posto:selCell.posto, turno_letra:selCell.turnoLetra, auxiliar_id:selCell.tipo==="auxiliar"?selPersonId:null, doutor_id:selCell.tipo==="doutor"?selPersonId:null }
@@ -636,10 +701,18 @@ export default function EscalaSemanal() {
                       const esc=getEscala(dateStr,turno,p.key)
                       const derived = esc?.id?.startsWith("mensal_")
                       const cellName = getCellName(esc)
+                      const temRestr = esc?.auxiliar_id
+                        ? auxTemRestricao(esc.auxiliar_id, p.key, turno, dateStr)
+                        : false
                       return(
                         <td key={p.key} onClick={()=>openCell(dateStr,turno,p.key as PostoKey)}
-                          title={cellName ? `${cellName}${derived?" (da escala mensal)":""}` : "Clique para atribuir"}
-                          style={{ ...cellBase, backgroundColor:p.bg, opacity: derived ? 0.75 : 1, fontStyle: derived ? "italic" : "normal" }}
+                          title={cellName
+                            ? `${cellName}${derived?" (da escala mensal)":""}${temRestr?" ⚠️ restrição ativa":""}`
+                            : "Clique para atribuir"}
+                          style={{ ...cellBase, backgroundColor:p.bg,
+                            opacity: derived ? 0.75 : 1,
+                            fontStyle: derived ? "italic" : "normal",
+                            border: temRestr ? "2px solid #EF4444" : B }}
                           onMouseEnter={e=>(e.currentTarget.style.filter="brightness(0.91)")}
                           onMouseLeave={e=>(e.currentTarget.style.filter="brightness(1)")}>
                           {cellName}
@@ -701,6 +774,9 @@ export default function EscalaSemanal() {
                 </div>
               ) : filtered.map(p=>{
                 const isSel=selPersonId===p.id
+                const pRestr = selCell
+                  ? auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data)
+                  : false
                 return(
                   <button key={p.id} onClick={()=>setSelPersonId(isSel?"":p.id)}
                     style={{ width:"100%",display:"flex",alignItems:"center",gap:"12px",padding:"9px 12px",borderRadius:"10px",border:"none",cursor:"pointer",textAlign:"left",backgroundColor:isSel?"#EBF4F8":"transparent",transition:"background-color 0.12s" }}
@@ -708,11 +784,19 @@ export default function EscalaSemanal() {
                     onMouseLeave={e=>{ if(!isSel) e.currentTarget.style.backgroundColor="transparent" }}>
                     <div style={{ width:"36px",height:"36px",borderRadius:"10px",backgroundColor:isSel?accentBg:"#E8EEF2",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:700,flexShrink:0,color:isSel?"#FFFFFF":"#5A7080",transition:"all 0.12s" }}>{getInitials(p.nome)}</div>
                     <span style={{ flex:1,fontSize:"13px",fontWeight:isSel?600:500,color:isSel?"#1A3A4A":"#333" }}>{p.nome}</span>
+                    {pRestr && <span title="Restrição ativa para este posto/turno" style={{ fontSize:"14px" }}>⚠️</span>}
                     {isSel && <div style={{ width:"22px",height:"22px",borderRadius:"50%",backgroundColor:accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}><Check size={13} color="#FFF" strokeWidth={2.5}/></div>}
                   </button>
                 )
               })}
             </div>
+
+            {/* Restriction warning banner */}
+            {selPersonId && selCell && auxTemRestricao(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data) && (
+              <div style={{ margin:"0 20px 0",padding:"8px 12px",background:"#FEF3C7",border:"1px solid #FCD34D",borderRadius:"8px",fontSize:"12px",color:"#92400E",display:"flex",alignItems:"center",gap:"6px" }}>
+                ⚠️ Esta pessoa tem uma restrição ativa para este posto ou turno.
+              </div>
+            )}
 
             {/* Footer */}
             <div style={{ padding:"14px 20px 20px",borderTop:"1px solid #F0F0F0",display:"flex",gap:"8px",justifyContent:"flex-end",alignItems:"center",flexWrap:"wrap" }}>

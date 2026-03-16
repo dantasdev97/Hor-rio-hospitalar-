@@ -198,6 +198,22 @@ export default function EscalaMensal() {
   }
   useEffect(() => { fetchAll() }, [year, month])
 
+  // ── Realtime: detecta mudanças vindas da escala semanal (reverse sync) ─────
+  useEffect(() => {
+    const channel = supabase
+      .channel(`mensal-live-${year}-${month}`)
+      .on('postgres_changes', { event:'*', schema:'public', table:'escalas' },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as { data?: string; tipo_escala?: string } | undefined
+          if (row?.tipo_escala === 'mensal' && row?.data) {
+            const d = new Date(row.data + 'T12:00:00')
+            if (d.getFullYear() === year && d.getMonth() === month) fetchAll()
+          }
+        })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [year, month])
+
   // ── Helpers ───────────────────────────────────────────────────────────────
   function mkDateStr(day: number) { return `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}` }
   function getEscala(auxId: string, day: number) { return escalas.find(e => e.auxiliar_id===auxId && e.data===mkDateStr(day)) }
