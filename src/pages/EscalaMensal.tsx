@@ -267,6 +267,114 @@ export default function EscalaMensal() {
     if (ex) { setEscalas(p=>p.filter(e=>e.id!==ex.id)); const {error}=await supabase.from("escalas").delete().eq("id",ex.id); if (error) fetchAll() }
   }
 
+  // ── Alertas / Validações ──────────────────────────────────────────────────
+  function getTurnoLetraMensal(t: Turno): "M" | "T" | "N" | null {
+    if (isNoturnoTurno(t)) return "N"
+    const n = t.nome.toUpperCase()
+    if (n.startsWith("MT")) return null
+    if (n.startsWith("M")) return "M"
+    if (n.startsWith("T")) return "T"
+    return null
+  }
+
+  interface AlertaMensal { tipo: "erro"|"aviso"; mensagem: string }
+
+  function calcularAlertas(): AlertaMensal[] {
+    const alertas: AlertaMensal[] = []
+    const cfg = loadCfg()
+
+    for (let dayOffset = 1; dayOffset <= daysInMonth; dayOffset++) {
+      const dateStr = `${year}-${String(month+1).padStart(2,"0")}-${String(dayOffset).padStart(2,"0")}`
+      const dow = getDay(new Date(year, month, dayOffset))
+      const isSunday = dow === 0
+      const label = `${dayOffset}/${month+1}`
+      const dayEscalas = escalas.filter(e => e.data === dateStr && e.turno_id)
+
+      // 1. Contagem N por dia — deve ser 2 (RX URG + TAC 2)
+      const nCount = dayEscalas.filter(e => {
+        const t = turnos.find(t => t.id === e.turno_id)
+        return t && isNoturnoTurno(t)
+      }).length
+      if (nCount === 0 && dayEscalas.length > 0)
+        alertas.push({ tipo:"erro", mensagem:`${label} — Nenhum auxiliar no turno N (necessário 2: RX URG + TAC 2)` })
+      else if (nCount === 1)
+        alertas.push({ tipo:"erro", mensagem:`${label} — Apenas 1 auxiliar no turno N (necessário 2: RX URG + TAC 2)` })
+      else if (nCount > 2)
+        alertas.push({ tipo:"aviso", mensagem:`${label} — ${nCount} auxiliares no turno N (esperado exactamente 2)` })
+
+      // 2. Cobertura EXAM1-M e EXAM1-T (seg–sáb)
+      if (!isSunday) {
+        const hasExam1M = dayEscalas.some(e => {
+          const t = turnos.find(t => t.id === e.turno_id)
+          return t && getTurnoLetraMensal(t) === "M" && (t.postos ?? []).includes("EXAM1")
+        })
+        if (!hasExam1M && dayEscalas.length > 0)
+          alertas.push({ tipo:"erro", mensagem:`${label} — Sem cobertura para Exames Comp. 1 no turno M` })
+
+        const hasExam1T = dayEscalas.some(e => {
+          const t = turnos.find(t => t.id === e.turno_id)
+          return t && getTurnoLetraMensal(t) === "T" && (t.postos ?? []).includes("EXAM1")
+        })
+        if (!hasExam1T && dayEscalas.length > 0)
+          alertas.push({ tipo:"aviso", mensagem:`${label} — Sem cobertura para Exames Comp. 1 no turno T` })
+      }
+
+      // 3. Aux escalado ao fim-de-semana sem trabalha_fds
+      if (dow === 0 || dow === 6) {
+        for (const e of dayEscalas) {
+          const aux = auxiliares.find(a => a.id === e.auxiliar_id)
+          if (aux && (aux as Auxiliar & { trabalha_fds?: boolean }).trabalha_fds === false) {
+            alertas.push({ tipo:"erro",
+              mensagem:`${aux.nome} escalado ao ${dow===0?"Domingo":"Sábado"} ${label} mas não trabalha ao fim-de-semana` })
+          }
+        }
+      }
+    }
+
+    // 4. Descanso pós-noturno violado (N → M ou T no dia seguinte)
+    for (const e of escalas) {
+      if (!e.turno_id) continue
+      const t = turnos.find(t => t.id === e.turno_id)
+      if (!t || !isNoturnoTurno(t)) continue
+      const nextDayStr = format(addDays(parseISO(e.data), 1), "yyyy-MM-dd")
+      const nextEntry = escalas.find(ne =>
+        ne.auxiliar_id === e.auxiliar_id && ne.data === nextDayStr && ne.turno_id
+      )
+      if (nextEntry) {
+        const nt = turnos.find(t => t.id === nextEntry.turno_id)
+        const nl = nt ? getTurnoLetraMensal(nt) : null
+        if (nl === "M" || nl === "T") {
+          const aux = auxiliares.find(a => a.id === e.auxiliar_id)
+          const [d1, d2] = [format(parseISO(e.data),"d/M"), format(parseISO(nextDayStr),"d/M")]
+          alertas.push({ tipo:"erro",
+            mensagem:`${aux?.nome ?? "?"} — Turno N em ${d1} seguido de ${nl} em ${d2} (descanso mínimo violado)` })
+        }
+      }
+    }
+
+    // 5. Excesso de nocturnos mensais
+    for (const aux of auxiliares) {
+      const nCount = escalas.filter(e => {
+        if (e.auxiliar_id !== aux.id || !e.turno_id) return false
+        const t = turnos.find(t => t.id === e.turno_id)
+        return t && isNoturnoTurno(t)
+      }).length
+      if (nCount > cfg.maxTurnosNoturnosMes)
+        alertas.push({ tipo:"aviso",
+          mensagem:`${aux.nome} — ${nCount} turnos N no mês (máximo configurado: ${cfg.maxTurnosNoturnosMes})` })
+    }
+
+    // 6. Excesso de turnos totais mensais
+    for (const aux of auxiliares) {
+      const total = escalas.filter(e => e.auxiliar_id === aux.id && e.turno_id).length
+      if (total > cfg.maxTurnosMes)
+        alertas.push({ tipo:"aviso",
+          mensagem:`${aux.nome} — ${total} turnos no mês (máximo: ${cfg.maxTurnosMes})` })
+    }
+
+    return alertas
+  }
+
   // ── Gerar Escala Mensal ───────────────────────────────────────────────────
   async function gerarEscalaMensal() {
     if (turnos.length === 0) return
@@ -432,8 +540,8 @@ export default function EscalaMensal() {
           pending.add(k)
           if (noturnoIds.has(plannedTurnoId)) addDescansoFolga(aux.id, d)
         } else {
-          // Not needed today → Folga (skip if weekend and aux doesn't work weekends)
-          if ((dow === 0 || dow === 6) && aux.trabalha_fds === false) continue
+          // Not needed today → Folga (skip entirely for Mon-Fri-only aux; no auto-F)
+          if (aux.trabalha_fds === false) continue
           payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:"F" })
           pending.add(k)
         }
@@ -830,6 +938,36 @@ export default function EscalaMensal() {
       {!loading&&<div className="mt-3 flex flex-wrap gap-2">
         {SPECIAL.map(s=><span key={s.code} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded border" style={{background:s.bg,color:s.text,borderColor:s.bg}}><strong>{s.code}</strong> — {s.label}</span>)}
       </div>}
+
+      {/* Painel de Alertas */}
+      {!loading && (() => {
+        const alertas = calcularAlertas()
+        const erros  = alertas.filter(a => a.tipo === "erro")
+        const avisos = alertas.filter(a => a.tipo === "aviso")
+        if (alertas.length === 0) return (
+          <div style={{ margin:"12px 0",padding:"10px 16px",background:"#F0FDF4",border:"1px solid #86EFAC",borderRadius:"10px",fontSize:"12px",color:"#166534",display:"flex",gap:"8px",alignItems:"center" }}>
+            ✅ Sem alertas detectados para este mês.
+          </div>
+        )
+        return (
+          <div style={{ margin:"12px 0",borderRadius:"10px",overflow:"hidden",border:"1px solid #E5E7EB" }}>
+            <div style={{ padding:"10px 16px",background:"#FEF2F2",borderBottom:"1px solid #FECACA",display:"flex",gap:"12px",alignItems:"center",fontSize:"12px",fontWeight:600,color:"#7F1D1D",flexWrap:"wrap" }}>
+              🚨 <span>{erros.length} erro(s)</span>
+              <span style={{ color:"#D1D5DB" }}>·</span>
+              ⚠️ <span style={{ color:"#92400E" }}>{avisos.length} aviso(s)</span>
+              <span style={{ marginLeft:"auto",fontSize:"11px",fontWeight:400,color:"#9CA3AF",fontStyle:"italic" }}>Escala {format(currentDate,"MMMM yyyy",{locale:ptBR})}</span>
+            </div>
+            <div style={{ maxHeight:"260px",overflowY:"auto",padding:"8px",background:"#FAFAFA" }}>
+              {alertas.map((a, i) => (
+                <div key={i} style={{ display:"flex",gap:"8px",alignItems:"flex-start",padding:"6px 10px",borderRadius:"6px",marginBottom:"3px",background:a.tipo==="erro"?"#FEF2F2":"#FFFBEB",border:`1px solid ${a.tipo==="erro"?"#FECACA":"#FDE68A"}`,fontSize:"12px",color:a.tipo==="erro"?"#991B1B":"#92400E" }}>
+                  <span style={{ flexShrink:0 }}>{a.tipo==="erro"?"🚨":"⚠️"}</span>
+                  <span>{a.mensagem}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Modals */}
       {generating && <GenModal total={genProgress.total} current={genProgress.current} log={genLog}/>}
