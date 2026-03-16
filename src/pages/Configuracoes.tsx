@@ -27,6 +27,7 @@ interface EmpresaConfig {
 interface HorariosConfig {
   bloquearTurnosConsecutivos: boolean
   horasDescansMinimas: number
+  maxTurnosSemana: number
   maxTurnosNoturnos: number
   maxTurnosMes: number
   maxTurnosNoturnosMes: number
@@ -56,6 +57,7 @@ const defaultEmpresa: EmpresaConfig = {
 const defaultHorarios: HorariosConfig = {
   bloquearTurnosConsecutivos: true,
   horasDescansMinimas: 11,
+  maxTurnosSemana: 5,
   maxTurnosNoturnos: 2,
   alertasConflito: true,
   permitirSubstituicoes: false,
@@ -450,6 +452,16 @@ function TabHorarios() {
           <CardDescription>Quotas máximas por auxiliar em cada semana</CardDescription>
         </CardHeader>
         <CardContent className="divide-y divide-gray-100">
+          <SettingRow
+            label="Máximo de turnos por semana"
+            description="Limite total de turnos que um auxiliar pode realizar numa semana"
+          >
+            <NumberStepper
+              value={config.maxTurnosSemana}
+              onChange={(v) => setNum("maxTurnosSemana", v)}
+              min={1} max={7} suffix=""
+            />
+          </SettingRow>
           <SettingRow
             label="Máximo de turnos noturnos por semana"
             description="Limite de turnos noturnos (ex: N5, T21+) por semana"

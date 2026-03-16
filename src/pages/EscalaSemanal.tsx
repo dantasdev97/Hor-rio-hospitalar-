@@ -41,6 +41,21 @@ function loadCfg() {
   catch { return DEFAULT_CFG }
 }
 
+// ─── Helpers de descanso ─────────────────────────────────────────────────────
+function toMinutesSem(time: string): number {
+  const [h, m] = time.split(":").map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+function restHoursBetweenSem(prev: { horario_inicio: string; horario_fim: string }, nextInicio: string): number {
+  if (!prev.horario_inicio || !prev.horario_fim || !nextInicio) return 24
+  const prevStart = toMinutesSem(prev.horario_inicio)
+  const prevEnd   = toMinutesSem(prev.horario_fim)
+  const nextStart = toMinutesSem(nextInicio)
+  const crossesDay = prevEnd < prevStart
+  const gapMin = crossesDay ? nextStart - prevEnd : nextStart + 1440 - prevEnd
+  return gapMin / 60
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface EscalaRow { id:string; data:string; posto:string; turno_letra:string; auxiliar_id:string|null; doutor_id:string|null }
 interface UndoState { inserted:EscalaRow[]; deleted:EscalaRow[] }
@@ -204,8 +219,8 @@ export default function EscalaSemanal() {
 
     // Fetch restrictions + turno names + escala mensal + ausências desta semana
     const [{ data:restricoes }, { data:allTurnos }, { data:mensalSemana }, { data:ausenciasSemana }] = await Promise.all([
-      supabase.from("restricoes").select("auxiliar_id,turno_id,posto"),
-      supabase.from("turnos").select("id,nome"),
+      supabase.from("restricoes").select("auxiliar_id,turno_id,posto,data_inicio,data_fim"),
+      supabase.from("turnos").select("id,nome,horario_inicio,horario_fim"),
       supabase.from("escalas")
         .select("auxiliar_id,data,turno_id")
         .eq("tipo_escala","mensal")
@@ -227,6 +242,10 @@ export default function EscalaSemanal() {
     const turnoLetterRestr: Record<string, Set<string>> = {}
 
     for (const r of (restricoes ?? [])) {
+      // Falha 8: filtrar restrições temporárias inativas nesta semana
+      if (r.data_fim    && r.data_fim    < startDate) continue // expirada
+      if (r.data_inicio && r.data_inicio > endDate)   continue // futura
+
       if (r.posto) {
         if (!postoRestr[r.auxiliar_id]) postoRestr[r.auxiliar_id] = new Set()
         postoRestr[r.auxiliar_id].add(r.posto)
@@ -234,8 +253,12 @@ export default function EscalaSemanal() {
       if (r.turno_id && allTurnos) {
         const turno = allTurnos.find(t => t.id===r.turno_id)
         if (turno) {
+          // Falha 6 (semanal): usar horario_inicio para classificar como N se disponível
           const n = turno.nome.toUpperCase()
-          const letter = n.startsWith("MT") ? "MT" : n.startsWith("N") ? "N" : n.startsWith("M") ? "M" : n.startsWith("T") ? "T" : ""
+          const isNoc = (turno.horario_inicio && turno.horario_inicio !== "00:00")
+            ? turno.horario_inicio >= "20:00"
+            : n.startsWith("N")
+          const letter = n.startsWith("MT") ? "MT" : isNoc ? "N" : n.startsWith("M") ? "M" : n.startsWith("T") ? "T" : ""
           if (letter) {
             if (!turnoLetterRestr[r.auxiliar_id]) turnoLetterRestr[r.auxiliar_id] = new Set()
             turnoLetterRestr[r.auxiliar_id].add(letter)
@@ -304,7 +327,24 @@ export default function EscalaSemanal() {
       if (e.doutor_id)   dotCount[e.doutor_id]   = (dotCount[e.doutor_id]  ??0)+1
     })
 
+    // Falha 5 (noturno não contado): contador nocturno por aux na semana
+    const auxNocCount: Record<string,number> = Object.fromEntries(auxiliares.map(a=>[a.id,0]))
+    escalas.forEach(e => { if (e.auxiliar_id && e.turno_letra==="N") auxNocCount[e.auxiliar_id] = (auxNocCount[e.auxiliar_id]??0)+1 })
+
+    // Falhas 1+2: mapa letra → horário representativo para verificar descanso
+    const turnoLetterHorario: Partial<Record<TurnoLetra, { horario_inicio: string; horario_fim: string }>> = {}
+    for (const t of (allTurnos ?? [])) {
+      const n = t.nome.toUpperCase()
+      const isNoc = (t.horario_inicio && t.horario_inicio !== "00:00") ? t.horario_inicio >= "20:00" : n.startsWith("N")
+      const letter: TurnoLetra | null = n.startsWith("MT") ? null : isNoc ? "N" : n.startsWith("M") ? "M" : n.startsWith("T") ? "T" : null
+      if (letter && !turnoLetterHorario[letter]) turnoLetterHorario[letter] = { horario_inicio: t.horario_inicio, horario_fim: t.horario_fim }
+    }
+
+    // Rastreia o que foi atribuído a cada aux em cada dia desta geração
+    const builtAuxDay = new Map<string, TurnoLetra>() // `${auxId}_${dateStr}` → TurnoLetra
+
     const payloads: object[] = []
+    let unfilledSlots = 0 // Falha 5 (alertasConflito)
 
     for (const day of weekDays) {
       const dateStr = format(day,"yyyy-MM-dd")
@@ -328,15 +368,28 @@ export default function EscalaSemanal() {
             if (!auxiliares.length) continue
 
             // Turno esperado por aux: prioriza escala mensal deste dia, depois fallback semanal
-            // Respeita: ausências, FDS, restrições de turno/posto, limite semanal
+            // Respeita: ausências, FDS, restrições de turno/posto, limite semanal, nocturno e descanso
             const avail = auxiliares.filter(aux => {
-              if (isFds && aux.trabalha_fds === false) return false          // não trabalha FDS
-              if (ausBlock.has(`${aux.id}_${dateStr}`)) return false         // ausência
+              if (isFds && aux.trabalha_fds === false) return false
+              if (ausBlock.has(`${aux.id}_${dateStr}`)) return false
               const mensalLetra = auxDayShift[aux.id]?.[dateStr]
               const expectedShift = mensalLetra ?? auxShift[aux.id]
-              if (expectedShift && expectedShift !== turno) return false      // turno errado
-              if (postoRestr[aux.id]?.has(posto.key)) return false           // posto restrito
-              if ((auxCount[aux.id]??0) >= cfg.maxTurnosSemana) return false // limite semanal
+              if (expectedShift && expectedShift !== turno) return false
+              if (postoRestr[aux.id]?.has(posto.key)) return false
+              if ((auxCount[aux.id]??0) >= cfg.maxTurnosSemana) return false
+              // Falha nocturno: limite semanal de noturnos
+              if (turno === "N" && (auxNocCount[aux.id]??0) >= cfg.maxTurnosNoturnos) return false
+              // Falhas 1+2: descanso mínimo entre turnos
+              if (cfg.bloquearTurnosConsecutivos) {
+                const prevDate = format(addDays(day, -1), "yyyy-MM-dd")
+                const prevLetra = (escalas.find(e => e.auxiliar_id===aux.id && e.data===prevDate)?.turno_letra as TurnoLetra | undefined)
+                  ?? builtAuxDay.get(`${aux.id}_${prevDate}`)
+                if (prevLetra) {
+                  const prevH = turnoLetterHorario[prevLetra]
+                  const currH = turnoLetterHorario[turno]
+                  if (prevH && currH && restHoursBetweenSem(prevH, currH.horario_inicio) < cfg.horasDescansMinimas) return false
+                }
+              }
               return true
             })
 
@@ -353,13 +406,26 @@ export default function EscalaSemanal() {
                 const lr = turnoLetterRestr[aux.id] ?? new Set()
                 if (lr.has(turno)) return false
                 if ((auxCount[aux.id]??0) >= cfg.maxTurnosSemana) return false
+                if (turno === "N" && (auxNocCount[aux.id]??0) >= cfg.maxTurnosNoturnos) return false
+                if (cfg.bloquearTurnosConsecutivos) {
+                  const prevDate = format(addDays(day, -1), "yyyy-MM-dd")
+                  const prevLetra = (escalas.find(e => e.auxiliar_id===aux.id && e.data===prevDate)?.turno_letra as TurnoLetra | undefined)
+                    ?? builtAuxDay.get(`${aux.id}_${prevDate}`)
+                  if (prevLetra) {
+                    const prevH = turnoLetterHorario[prevLetra]
+                    const currH = turnoLetterHorario[turno]
+                    if (prevH && currH && restHoursBetweenSem(prevH, currH.horario_inicio) < cfg.horasDescansMinimas) return false
+                  }
+                }
                 return true
               })
-              if (!fallback.length) continue
+              if (!fallback.length) { unfilledSlots++; continue }
               picked = fallback.sort((a,b)=>(auxCount[a.id]??0)-(auxCount[b.id]??0))[0]
             }
 
             auxCount[picked.id] = (auxCount[picked.id]??0)+1
+            if (turno === "N") auxNocCount[picked.id] = (auxNocCount[picked.id]??0)+1
+            builtAuxDay.set(`${picked.id}_${dateStr}`, turno)
             setGenLog(p => [...p, `✓ ${picked!.nome.split(" ")[0]} · ${posto.label} · ${turno}`].slice(-8))
             payloads.push({ data:dateStr, posto:posto.key, turno_letra:turno, tipo_escala:"semanal", status:"alocado", auxiliar_id:picked.id, doutor_id:null })
           }
@@ -375,6 +441,13 @@ export default function EscalaSemanal() {
         setEscalas(p => [...p, ...(rows as EscalaRow[])])
         setUndoState({ inserted: rows as EscalaRow[], deleted:[] })
       }
+    }
+
+    // Falha 5: alertasConflito — avisar se houver postos por preencher
+    if (cfg.alertasConflito && unfilledSlots > 0) {
+      setToastMsg(`${unfilledSlots} posto(s) não preenchido(s) por falta de auxiliares disponíveis.`)
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 6000)
     }
 
     } catch (err) {

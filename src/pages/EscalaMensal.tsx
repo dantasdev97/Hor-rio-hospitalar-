@@ -34,6 +34,29 @@ function loadCfg() {
   catch { return DEFAULT_CFG }
 }
 
+// ─── Helpers de turno noturno e descanso ─────────────────────────────────────
+function isNoturnoTurno(t: Turno): boolean {
+  // Usa horario_inicio se disponível; senão recai no nome
+  if (t.horario_inicio && t.horario_inicio !== "00:00") return t.horario_inicio >= "20:00"
+  return t.nome.toUpperCase().startsWith("N")
+}
+function toMinutes(time: string): number {
+  const [h, m] = time.split(":").map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+// Calcula horas de descanso entre fim do turno anterior (dia d) e início do turno seguinte (dia d+1)
+function restHoursBetween(prev: { horario_inicio: string; horario_fim: string }, nextInicio: string): number {
+  if (!prev.horario_inicio || !prev.horario_fim || !nextInicio) return 24
+  const prevStart = toMinutes(prev.horario_inicio)
+  const prevEnd   = toMinutes(prev.horario_fim)
+  const nextStart = toMinutes(nextInicio)
+  // Turno noturno cruza meia-noite (fim < inicio), ex: N 21:00–07:00
+  // O fim já está no dia d+1, portanto o gap é simples
+  const crossesDay = prevEnd < prevStart
+  const gapMin = crossesDay ? nextStart - prevEnd : nextStart + 1440 - prevEnd
+  return gapMin / 60
+}
+
 function deriveTurnoColor(nome: string): { bg: string; text: string } {
   const n = nome.toUpperCase()
   if (n.startsWith("MT"))  return { bg: "#BAE6FD", text: "#0C4A6E" }
@@ -236,7 +259,7 @@ export default function EscalaMensal() {
     const endOfMonthStr   = `${year}-${String(month+1).padStart(2,"0")}-${String(daysInMonth).padStart(2,"0")}`
 
     const [{ data: restricoes }, { data: ausenciasMes }] = await Promise.all([
-      supabase.from("restricoes").select("auxiliar_id,turno_id"),
+      supabase.from("restricoes").select("auxiliar_id,turno_id,data_inicio,data_fim"),
       supabase.from("ausencias").select("auxiliar_id,codigo,data_inicio,data_fim")
         .lte("data_inicio", endOfMonthStr)
         .gte("data_fim",    startOfMonthStr),
@@ -247,9 +270,12 @@ export default function EscalaMensal() {
     setGenLog([])
 
     // Build restriction map: auxId → Set<turnoId>
+    // Falha 8: filtrar restrições temporárias pelo período do mês
     const turnoRestr: Record<string, Set<string>> = {}
     for (const r of (restricoes ?? [])) {
       if (!r.turno_id) continue
+      if (r.data_fim   && r.data_fim   < startOfMonthStr) continue // expirada
+      if (r.data_inicio && r.data_inicio > endOfMonthStr)  continue // futura
       if (!turnoRestr[r.auxiliar_id]) turnoRestr[r.auxiliar_id] = new Set()
       turnoRestr[r.auxiliar_id].add(r.turno_id)
     }
@@ -265,7 +291,8 @@ export default function EscalaMensal() {
       }
     }
 
-    const noturnoIds = new Set(turnos.filter(t => t.nome.toUpperCase().startsWith("N")).map(t => t.id))
+    // Falha 6: deteção de noturno por horario_inicio em vez do nome
+    const noturnoIds = new Set(turnos.filter(isNoturnoTurno).map(t => t.id))
 
     type WKey = string
     const wkCount: Record<string, Record<WKey,number>> = {}
@@ -293,6 +320,16 @@ export default function EscalaMensal() {
     type PayloadRow = { auxiliar_id:string; data:string; tipo_escala:string; status:string; turno_id:string|null; codigo_especial:string|null }
     const payloads: PayloadRow[] = []
     const pending = new Set<string>() // `${auxId}_${dateStr}`
+
+    // Falha 1+2: bloquearTurnosConsecutivos — rastreia turno atribuído por dia por aux
+    const existingDayTurno = new Map<string, string>() // `${auxId}_${dateStr}` → turnoId
+    for (const e of escalas) {
+      if (e.auxiliar_id && e.turno_id) existingDayTurno.set(`${e.auxiliar_id}_${e.data}`, e.turno_id)
+    }
+    const pendingTurno = new Map<string, string>() // idem para os payloads desta geração
+
+    // Falha 9: distribuição justa de turnos — conta quantas vezes cada turno foi atribuído a cada aux
+    const auxTurnoCount: Record<string, Record<string, number>> = {}
 
     // Night shift on day d → D on d-1 (rest before), D on d+1, F on d+2
     function addDescansoFolga(auxId: string, d: number) {
@@ -368,9 +405,33 @@ export default function EscalaMensal() {
         const candidates = (nocExceeded || nocMonthlyExceeded) ? available.filter(t=>!noturnoIds.has(t.id)) : available
         if (candidates.length === 0) continue
 
-        const picked = candidates[(d + aux.id.charCodeAt(0)) % candidates.length]
+        // Falha 1+2: bloquear turno se descanso mínimo não respeitado após turno anterior
+        let filteredCandidates = candidates
+        if (cfg.bloquearTurnosConsecutivos && d > 1) {
+          const prevKey = `${aux.id}_${mkDateStr(d - 1)}`
+          const prevTurnoId = existingDayTurno.get(prevKey) ?? pendingTurno.get(prevKey)
+          if (prevTurnoId) {
+            const prevTurno = turnos.find(t => t.id === prevTurnoId)
+            if (prevTurno) {
+              filteredCandidates = filteredCandidates.filter(t =>
+                restHoursBetween(prevTurno, t.horario_inicio) >= cfg.horasDescansMinimas
+              )
+            }
+          }
+        }
+        // Fallback: se todos filtrados, usa candidatos originais (cobertura > restrição)
+        if (filteredCandidates.length === 0) filteredCandidates = candidates
+
+        // Falha 9: seleção justa — turno com menor contagem para este aux
+        if (!auxTurnoCount[aux.id]) auxTurnoCount[aux.id] = {}
+        const picked = filteredCandidates.sort((a, b) =>
+          (auxTurnoCount[aux.id][a.id] ?? 0) - (auxTurnoCount[aux.id][b.id] ?? 0)
+        )[0]
+
         payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:picked.id, codigo_especial:null })
         pending.add(`${aux.id}_${dateStr}`)
+        pendingTurno.set(`${aux.id}_${dateStr}`, picked.id)
+        auxTurnoCount[aux.id][picked.id] = (auxTurnoCount[aux.id][picked.id] ?? 0) + 1
         monthCount[aux.id] = (monthCount[aux.id]??0)+1
         if (noturnoIds.has(picked.id)) {
           wkNoc[aux.id][wk] = (wkNoc[aux.id][wk]??0)+1
