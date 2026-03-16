@@ -540,8 +540,8 @@ export default function EscalaMensal() {
           pending.add(k)
           if (noturnoIds.has(plannedTurnoId)) addDescansoFolga(aux.id, d)
         } else {
-          // Not needed today → Folga (skip if weekend and aux doesn't work weekends)
-          if ((dow === 0 || dow === 6) && aux.trabalha_fds === false) continue
+          // Not needed today → Folga (skip entirely for Mon-Fri-only aux; no auto-F)
+          if (aux.trabalha_fds === false) continue
           payloads.push({ auxiliar_id:aux.id, data:dateStr, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:"F" })
           pending.add(k)
         }
