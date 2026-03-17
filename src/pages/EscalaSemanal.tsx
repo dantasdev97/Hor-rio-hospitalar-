@@ -304,16 +304,32 @@ export default function EscalaSemanal() {
         .filter(e => e.data===data && e.turno_letra===turnoLetra && e.auxiliar_id && e.posto!==posto)
         .map(e => e.auxiliar_id!)
     )
-    // 3. Derive from mensal
-    const mensal = mensalEntries.find(me => {
+    // 3. Mensal candidates that cover this posto, not blocked
+    const candidates = mensalEntries.filter(me => {
       if (me.data!==data || !me.auxiliar_id || !me.turno_id) return false
       if (busyAuxIds.has(me.auxiliar_id)) return false
       const t = turnosData.find(t => t.id===me.turno_id)
       if (!t || !t.postos.includes(posto)) return false
       return turnoToLetra(t) === turnoLetra
     })
-    if (!mensal?.auxiliar_id) return undefined
-    return { id:`mensal_${mensal.id}`, data, posto, turno_letra:turnoLetra, auxiliar_id:mensal.auxiliar_id, doutor_id:null }
+    if (!candidates.length) return undefined
+    // 4. Single candidate → return directly
+    if (candidates.length === 1) {
+      const me = candidates[0]
+      return { id:`mensal_${me.id}`, data, posto, turno_letra:turnoLetra, auxiliar_id:me.auxiliar_id, doutor_id:null }
+    }
+    // 5. Multiple candidates (e.g. 2×N5) → distribute by posto index among
+    //    aux-type postos with this turnoLetra, ordered by the POSTOS array
+    const auxLetraPostos = POSTOS
+      .filter(p =>
+        POSTO_SCHEDULE[p.key]?.shifts.includes(turnoLetra as TurnoLetra) &&
+        getPostoTipo(p.key as PostoKey, turnoLetra as TurnoLetra) === "auxiliar"
+      )
+      .map(p => p.key)
+    const postoIdx = auxLetraPostos.indexOf(posto as PostoKey)
+    const idx = postoIdx >= 0 && postoIdx < candidates.length ? postoIdx : 0
+    const me = candidates[idx]
+    return { id:`mensal_${me.id}`, data, posto, turno_letra:turnoLetra, auxiliar_id:me.auxiliar_id, doutor_id:null }
   }
   function getFirstName(fullName: string): string {
     return fullName.split(" ")[0]
