@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react"
 import { format, startOfWeek, addDays, getDay, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { ChevronLeft, ChevronRight, Search, X, Check, FileDown, MessageCircle, Loader2, Trash2, RotateCcw, Printer, Loader, Info } from "lucide-react"
-import html2pdf from "html2pdf.js"
+import jsPDF from "jspdf"
+import autoTable from "jspdf-autotable"
 import html2canvas from "html2canvas"
 import { supabase } from "@/lib/supabaseClient"
 import { Button } from "@/components/ui/button"
@@ -739,18 +740,112 @@ export default function EscalaSemanal() {
   }
 
   function exportPDF() {
-    // Pass the HTML string directly — all styles are inline inside buildPDFContent()
-    // so they survive html2pdf's internal innerHTML assignment without any style loss.
-    // This avoids the "fixed element offscreen = blank canvas" problem.
-    const opt: any = {
-      margin: [6, 10, 6, 10],
-      filename: `Escala_Semanal_${format(weekDays[0],"yyyy-MM-dd")}.pdf`,
-      image: { type: "jpeg", quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, windowWidth: 1048 },
-      jsPDF: { orientation: "landscape", unit: "mm", format: "a4" },
-      pagebreak: { mode: "avoid-all" },
+    // jsPDF + autoTable — PDF vetorial nativo (texto nítido, sem html2canvas)
+    function hexToRgb(hex: string): [number,number,number] {
+      return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)]
     }
-    html2pdf().set(opt).from(buildPDFContent()).save()
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" })
+
+    // ── Título ──────────────────────────────────────────────────────────────
+    const titleText = `ESCALA SEMANA ${format(weekDays[0],"d",{locale:ptBR}).toUpperCase()} A ${format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR}).toUpperCase()}`
+    doc.setFontSize(13)
+    doc.setFont("helvetica","bold")
+    doc.setTextColor(26,58,74)
+    doc.text(titleText, 148.5, 11, { align: "center" })
+    doc.setDrawColor(26,58,74)
+    doc.setLineWidth(0.5)
+    doc.line(6, 13.5, 291, 13.5)
+
+    // ── Cores ────────────────────────────────────────────────────────────────
+    const H1:  [number,number,number] = [255,215,0]
+    const H2:  [number,number,number] = [255,236,110]
+    const HRX: [number,number,number] = [146,208,80]
+    const HT:  [number,number,number] = [255,190,123]
+    const HGY: [number,number,number] = [217,217,217]
+    const SHIFT_RGB: Record<TurnoLetra,[number,number,number]> = {
+      N:[212,232,245], M:[217,242,221], T:[255,242,192]
+    }
+    const POSTO_RGB: Record<PostoKey,[number,number,number]> = {
+      RX_URG:[255,255,255], TAC2:[255,255,255], TAC1:[255,255,255],
+      EXAM1:[237,227,216], EXAM2:[237,227,216],
+      SALA6:[214,237,190], SALA7:[214,237,190],
+      TRANSPORT:[255,228,191],
+    }
+    const INACTIVE: [number,number,number] = [232,232,232]
+
+    // ── Cabeçalho (2 linhas) ─────────────────────────────────────────────────
+    // autoTable suporta rowSpan/colSpan via head array multi-linha
+    const head = [
+      [
+        { content:"DIA",                    rowSpan:2, styles:{fillColor:HGY,  fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const} },
+        { content:"T",                      rowSpan:2, styles:{fillColor:HGY,  fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const} },
+        { content:"RX URG",                 rowSpan:2, styles:{fillColor:H1,   fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const} },
+        { content:"TAC 2",                  rowSpan:2, styles:{fillColor:H1,   fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const} },
+        { content:"TAC 1",                  rowSpan:2, styles:{fillColor:H1,   fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const} },
+        { content:"EXAMES COMPLEMENTARES",  colSpan:2, styles:{fillColor:H1,   fontStyle:"bold" as const, halign:"center" as const} },
+        { content:"RX",                     colSpan:2, styles:{fillColor:HRX,  fontStyle:"bold" as const, halign:"center" as const} },
+        { content:"TRANSPORTES INT/URG",    rowSpan:2, styles:{fillColor:HT,   fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const, fontSize:7} },
+      ],
+      [
+        { content:"ECO URG",        styles:{fillColor:H2,                        fontStyle:"bold" as const, halign:"center" as const, fontSize:7} },
+        { content:"ECO COMPLEMENTAR",styles:{fillColor:H2,                       fontStyle:"bold" as const, halign:"center" as const, fontSize:7} },
+        { content:"SALA 6 BB",      styles:{fillColor:[168,216,144] as [number,number,number], fontStyle:"bold" as const, halign:"center" as const, fontSize:7} },
+        { content:"SALA 7 EXT",     styles:{fillColor:[168,216,144] as [number,number,number], fontStyle:"bold" as const, halign:"center" as const, fontSize:7} },
+      ],
+    ]
+
+    // ── Corpo ────────────────────────────────────────────────────────────────
+    const body: any[] = []
+    for (const [di, day] of weekDays.entries()) {
+      const ds = format(day,"yyyy-MM-dd")
+      const dayRgb = hexToRgb(DAY_BG[di % DAY_BG.length])
+      for (const [ti, turno] of TURNOS.entries()) {
+        const shiftRgb = SHIFT_RGB[turno as TurnoLetra]
+        const row: any[] = []
+        if (ti === 0) {
+          row.push({
+            content: `${format(day,"d")}\n${DIAS_PT[di]}`,
+            rowSpan: 3,
+            styles: { fillColor:dayRgb, fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const, fontSize:9 },
+          })
+        }
+        row.push({ content:turno, styles:{ fillColor:shiftRgb, fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const, fontSize:9 } })
+        for (const p of POSTOS) {
+          const opera = postoOpera(p.key as PostoKey, turno, ds)
+          const name  = opera ? getCellDisplayName(ds, turno, p.key as PostoKey) : ""
+          const bg    = opera ? POSTO_RGB[p.key as PostoKey] : INACTIVE
+          row.push({ content:name, styles:{ fillColor:bg, fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const, textColor: opera ? [0,0,0] : [180,180,180] } })
+        }
+        body.push(row)
+      }
+    }
+
+    // ── Render ────────────────────────────────────────────────────────────────
+    autoTable(doc, {
+      head,
+      body,
+      startY: 16,
+      margin: { left:6, right:6 },
+      tableWidth: "auto",
+      styles:     { fontSize:7.5, cellPadding:2.5, overflow:"ellipsize", valign:"middle", halign:"center", lineWidth:0.15, lineColor:[180,180,180] },
+      headStyles: { fontStyle:"bold", fontSize:8, cellPadding:3 },
+      columnStyles: {
+        0: { cellWidth:12 },   // DIA
+        1: { cellWidth:7  },   // T
+        2: { cellWidth:29 },   // RX URG
+        3: { cellWidth:25 },   // TAC 2
+        4: { cellWidth:25 },   // TAC 1
+        5: { cellWidth:30 },   // ECO URG
+        6: { cellWidth:35 },   // ECO COMPLEMENTAR
+        7: { cellWidth:26 },   // SALA 6
+        8: { cellWidth:26 },   // SALA 7
+        9: { cellWidth:30 },   // TRANSPORTES
+      },
+      theme: "grid",
+    })
+
+    doc.save(`Escala_Semanal_${format(weekDays[0],"yyyy-MM-dd")}.pdf`)
   }
 
   async function shareWA() {
