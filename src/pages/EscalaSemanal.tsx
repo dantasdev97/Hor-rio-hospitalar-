@@ -740,46 +740,58 @@ export default function EscalaSemanal() {
   }
 
   function exportPDF() {
-    // ── Cores (fiéis à imagem de referência) ─────────────────────────────────
-    const YEL:  [n,n,n] = [255,235,156]  // amarelo cabeçalho / título
-    const GRN:  [n,n,n] = [169,208,142]  // verde grupo RX (SALA 6/7)
-    const ORA:  [n,n,n] = [255,192,0]    // laranja Transportes cabeçalho
-    const WHT:  [n,n,n] = [255,255,255]  // branco (inactivo / vazio)
-    const DOC:  [n,n,n] = [191,191,191]  // cinza médio para células de doutor
-    const SALA_C: [n,n,n] = [146,208,80] // verde células SALA 6/7 com pessoas
-    const TRS_C:  [n,n,n] = [255,192,0]  // laranja células TRANSPORT com pessoas
-    const SHFT: Record<TurnoLetra,[n,n,n]> = {
-      N:[189,215,238], M:[198,239,206], T:[255,235,156]
-    }
     type n = number
+    // ── Paleta exacta da imagem de referência ────────────────────────────────
+    const WHT: [n,n,n] = [255,255,255]   // branco — título / dia / inactivo
+    const YEL: [n,n,n] = [255,235,156]   // amarelo — cabeçalho e rodapé
+    const GRN: [n,n,n] = [146,208, 80]   // verde — grupo RX e células SALA 6/7
+    const ORA: [n,n,n] = [255,192,  0]   // âmbar — Transportes + turno T
+    const DOC: [n,n,n] = [191,191,191]   // cinza — células de doutor
+    const RED: [n,n,n] = [255, 80, 80]   // vermelho — célula com conflito
+    const BLK: [n,n,n] = [  0,  0,  0]
+    const GREY_TXT: [n,n,n] = [160,160,160]
+    const SHFT: Record<TurnoLetra,[n,n,n]> = {
+      N:[189,215,238],   // azul claro
+      M:[198,239,206],   // verde claro
+      T:[255,192,  0],   // âmbar (igual ao ORA)
+    }
 
-    // ── Configuração de colunas ───────────────────────────────────────────────
-    // Total = 277mm (A4 landscape 297mm − 2×10mm margem)
-    const CW = { dia:22, t:9, rxurg:31, tac2:29, tac1:27, e1:33, e2:34, s6:28, s7:27, tr:37 }
-    // soma: 22+9+31+29+27+33+34+28+27+37 = 277 ✓
+    // ── Larguras (total = 277mm = A4-landscape 297 − 2×10 margens) ───────────
+    const CW = { dia:20, t:8, rxurg:32, tac2:30, tac1:27, e1:33, e2:34, s6:27, s7:27, tr:39 }
+    // 20+8+32+30+27+33+34+27+27+39 = 277 ✓
 
-    const s = (extra: object = {}) => ({ fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const, ...extra })
+    // helper de estilos de célula de cabeçalho
+    const H = (fill: [n,n,n], fs = 9, extra: object = {}) => ({
+      fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const,
+      fillColor:fill, fontSize:fs, textColor:BLK, cellPadding:2.5, ...extra,
+    })
 
-    // ── Cabeçalho ─────────────────────────────────────────────────────────────
-    const titleText = `Escala semana ${format(weekDays[0],"d",{locale:ptBR})} A ${format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}`
+    // ── Título (formato da imagem: "Escala semana 16 a 22 Março 2026") ────────
+    const monthYear = format(weekDays[6],"MMMM yyyy",{locale:ptBR})
+    const monthCap  = monthYear[0].toUpperCase() + monthYear.slice(1)
+    const titleText = `Escala semana ${format(weekDays[0],"d")} a ${format(weekDays[6],"d")} de ${monthCap}`
+
+    // ── Cabeçalho (3 linhas: título + grupos + sub-grupos) ────────────────────
     const head = [
-      // Linha 0 — título full-width
-      [{ content:titleText, colSpan:10, styles:s({ fillColor:YEL, fontSize:13, cellPadding:4 }) }],
-      // Linha 1 — grupos
+      // linha 0 — título full-width, fundo branco, texto grande e bold
+      [{ content:titleText, colSpan:10,
+         styles:{ fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const,
+                  fillColor:WHT, fontSize:14, textColor:BLK, cellPadding:4 } }],
+      // linha 1 — grupos de colunas
       [
-        { content:"", rowSpan:2, styles:s({ fillColor:YEL }) },
-        { content:"", rowSpan:2, styles:s({ fillColor:YEL }) },
-        { content:"RX URG",                rowSpan:2, styles:s({ fillColor:YEL, fontSize:9 }) },
-        { content:"TAC 2",                 rowSpan:2, styles:s({ fillColor:YEL, fontSize:9 }) },
-        { content:"TAC 1",                 rowSpan:2, styles:s({ fillColor:YEL, fontSize:9 }) },
-        { content:"Exames Complementares", colSpan:2, rowSpan:2, styles:s({ fillColor:YEL, fontSize:9 }) },
-        { content:"RX",                    colSpan:2, styles:s({ fillColor:GRN, fontSize:9 }) },
-        { content:"Transportes\nINT/URG",  rowSpan:2, styles:s({ fillColor:ORA, fontSize:8 }) },
+        { content:"",                       rowSpan:2, styles:H(YEL) },
+        { content:"",                       rowSpan:2, styles:H(YEL) },
+        { content:"RX URG",                 rowSpan:2, styles:H(YEL,9) },
+        { content:"TAC 2",                  rowSpan:2, styles:H(YEL,9) },
+        { content:"TAC 1",                  rowSpan:2, styles:H(YEL,9) },
+        { content:"Exames Complementares",  colSpan:2, rowSpan:2, styles:H(YEL,9) },
+        { content:"RX",                     colSpan:2, styles:H(GRN,9) },
+        { content:"Transportes\nINT/URG",   rowSpan:2, styles:H(ORA,8) },
       ],
-      // Linha 2 — sub-grupos (só SALA 6 e SALA 7)
+      // linha 2 — sub-grupos RX
       [
-        { content:"SALA 6 BB",  styles:s({ fillColor:GRN, fontSize:8 }) },
-        { content:"SALA 7 EXT", styles:s({ fillColor:GRN, fontSize:8 }) },
+        { content:"SALA 6 BB",  styles:H(GRN,8) },
+        { content:"SALA 7 EXT", styles:H(GRN,8) },
       ],
     ]
 
@@ -791,47 +803,54 @@ export default function EscalaSemanal() {
       const dayLabel = `${format(day,"d")} - ${DIAS_PT[di]}`
 
       for (const [ti, turno] of TURNOS.entries()) {
-        const shiftRgb = SHFT[turno as TurnoLetra]
+        const shRgb = SHFT[turno as TurnoLetra]
         const row: any[] = []
 
-        // Coluna dia (rowspan 3)
+        // célula do dia (rowspan 3, fundo branco, texto bold)
         if (ti === 0) {
           row.push({ content:dayLabel, rowSpan:3,
-            styles:s({ fillColor:shiftRgb, fontSize:9, cellPadding:2 }) })
+            styles:{ fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const,
+                     fillColor:WHT, fontSize:8.5, textColor:BLK } })
         }
-        // Coluna turno
-        row.push({ content:turno, styles:s({ fillColor:shiftRgb, fontSize:9 }) })
+        // célula do turno (cor do shift)
+        row.push({ content:turno,
+          styles:{ fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const,
+                   fillColor:shRgb, fontSize:9, textColor:BLK } })
 
-        // Colunas de posto
+        // células de posto
         for (const p of POSTOS) {
-          const opera = postoOpera(p.key as PostoKey, turno as TurnoLetra, ds)
-          const name  = opera ? getCellDisplayName(ds, turno as TurnoLetra, p.key as PostoKey) : ""
-          const isDoc = getPostoTipo(p.key as PostoKey, turno as TurnoLetra) === "doutor"
+          const opera    = postoOpera(p.key as PostoKey, turno as TurnoLetra, ds)
+          const name     = opera ? getCellDisplayName(ds, turno as TurnoLetra, p.key as PostoKey) : ""
+          const isDoc    = getPostoTipo(p.key as PostoKey, turno as TurnoLetra) === "doutor"
+          const isDouble = isMultiPerson(p.key as PostoKey, turno as TurnoLetra)
+          const esc      = opera && !isDouble ? getEscala(ds, turno as TurnoLetra, p.key as PostoKey) : undefined
+          const conflict = !!(esc as any)?.conflito
 
           let bg: [n,n,n]
-          if (!opera)                                       bg = WHT
-          else if (isDoc)                                   bg = DOC
-          else if (p.key === "SALA6" || p.key === "SALA7") bg = name ? SALA_C : WHT
-          else if (p.key === "TRANSPORT")                   bg = name ? TRS_C  : WHT
-          else                                              bg = shiftRgb
+          if (!opera)                                        bg = WHT
+          else if (conflict)                                 bg = RED
+          else if (isDoc)                                    bg = DOC
+          else if (p.key === "SALA6" || p.key === "SALA7")  bg = name ? GRN : WHT
+          else if (p.key === "TRANSPORT")                    bg = name ? ORA : WHT
+          else                                               bg = shRgb
 
           row.push({ content:name,
             styles:{ fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const,
-              fillColor:bg, fontSize:8,
-              textColor: name ? [0,0,0] as [n,n,n] : [190,190,190] as [n,n,n] } })
+                     fillColor:bg, fontSize:8,
+                     textColor: conflict ? WHT : (name ? BLK : GREY_TXT) } })
         }
         body.push(row)
       }
 
-      // Linha separadora entre dias (fina, branca)
+      // separador fino entre dias (branco, 1 mm)
       if (di < 6) {
         body.push(Array.from({length:10}, () =>
-          ({ content:"", styles:{ fillColor:WHT, minCellHeight:2, cellPadding:0 } })
+          ({ content:"", styles:{ fillColor:WHT, minCellHeight:1, cellPadding:0 } })
         ))
       }
     }
 
-    // ── Rodapé (3 linhas amarelas com notas) ─────────────────────────────────
+    // ── Rodapé — 3 linhas com notas (fundo amarelo, texto bold centrado) ──────
     const notes = [
       "TURNO SALA 6 E T15 - TRANSPORTE DE DOENTES MARCADOS - LEITOS - HIGIENIZAÇÃO SERVIÇO - RENDER RX P/REFEIÇÃO - APOIAR COLEGAS SEMPRE QUE POSSIVEL SOLICITADO",
       "TURNO T15 SALA 7 - RENDE COLEGA DA TAC2 ÀS 18H30 E PERMANECE NA SALA ATÉ AO FECHO ÀS 20H30 - PÓS ESSA HORA VOLTA ÀS TAREFAS NORMAIS",
@@ -840,41 +859,46 @@ export default function EscalaSemanal() {
     for (const note of notes) {
       body.push([{ content:note, colSpan:10,
         styles:{ fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const,
-          fillColor:YEL, fontSize:7.5, textColor:[0,0,0] as [n,n,n] } }])
+                 fillColor:YEL, fontSize:7, textColor:BLK, cellPadding:2 } }])
     }
 
-    // ── Render (2 passes para centrar verticalmente) ──────────────────────────
+    // ── Opções da tabela (partilhadas entre o 1.º e 2.º pass) ────────────────
     const margin = 10
-    const pageH  = 210
+    const pageH  = 210   // A4 landscape
     const tableOpts: Parameters<typeof autoTable>[1] = {
       head, body,
       startY: 0,
       margin: { left:margin, right:margin },
       tableWidth: 277,
-      styles:     { fontSize:8, cellPadding:2, overflow:"ellipsize", valign:"middle", halign:"center", lineWidth:0.2, lineColor:[128,128,128] as [n,n,n] },
-      headStyles: { fontStyle:"bold", fontSize:9 },
+      styles: {
+        fontSize:8, cellPadding:1.8, overflow:"ellipsize",
+        valign:"middle", halign:"center",
+        lineWidth:0.22, lineColor:[160,160,160] as [n,n,n],
+      },
+      headStyles: { fontStyle:"bold", cellPadding:2.5 },
       columnStyles: {
-        0: { cellWidth:CW.dia  },
-        1: { cellWidth:CW.t    },
-        2: { cellWidth:CW.rxurg},
-        3: { cellWidth:CW.tac2 },
-        4: { cellWidth:CW.tac1 },
-        5: { cellWidth:CW.e1   },
-        6: { cellWidth:CW.e2   },
-        7: { cellWidth:CW.s6   },
-        8: { cellWidth:CW.s7   },
-        9: { cellWidth:CW.tr   },
+        0: { cellWidth:CW.dia   },
+        1: { cellWidth:CW.t     },
+        2: { cellWidth:CW.rxurg },
+        3: { cellWidth:CW.tac2  },
+        4: { cellWidth:CW.tac1  },
+        5: { cellWidth:CW.e1    },
+        6: { cellWidth:CW.e2    },
+        7: { cellWidth:CW.s6    },
+        8: { cellWidth:CW.s7    },
+        9: { cellWidth:CW.tr    },
       },
       theme: "grid",
     }
 
-    // 1.ª passagem: medir altura real
+    // 1.ª passagem — medir altura real da tabela
     const dummy = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" })
     autoTable(dummy, tableOpts)
     const tableH = (dummy as any).lastAutoTable.finalY as number
-    const startY = Math.max(margin, (pageH - tableH) / 2)
+    // centra verticalmente; garante margem mínima de 8 mm
+    const startY = Math.max(8, (pageH - tableH) / 2)
 
-    // 2.ª passagem: renderizar centrado
+    // 2.ª passagem — renderizar com startY centrado
     const doc = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" })
     autoTable(doc, { ...tableOpts, startY })
     doc.save(`Escala_Semanal_${format(weekDays[0],"yyyy-MM-dd")}.pdf`)
