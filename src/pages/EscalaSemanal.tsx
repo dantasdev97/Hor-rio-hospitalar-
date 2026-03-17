@@ -40,8 +40,18 @@ const POSTO_SCHEDULE: Record<PostoKey, { shifts: TurnoLetra[]; days: DayType[] }
   SALA7:     { shifts: ["M","T"],    days: ["weekday","saturday","sunday"] },
 }
 
-function getPostoTipo(posto: PostoKey, turno: TurnoLetra): PostoTipo {
-  return (posto === "EXAM1" || posto === "EXAM2") && turno === "N" ? "doutor" : "auxiliar"
+function getPostoTipo(_posto: PostoKey, _turno: TurnoLetra): PostoTipo {
+  return "auxiliar"
+}
+// Returns maximum number of persons allowed in a cell (1 = single, 2 = double, 3 = triple)
+function getMaxPersons(posto: PostoKey, turno: TurnoLetra): number {
+  if (posto === "TRANSPORT" && turno === "M") return 2
+  if (posto === "EXAM1") return 2
+  if (posto === "EXAM2" && turno === "N") return 3
+  return 1
+}
+function isMultiPerson(posto: PostoKey, turno: TurnoLetra): boolean {
+  return getMaxPersons(posto, turno) > 1
 }
 function postoInfo(key: PostoKey) { return POSTOS.find(p => p.key===key)! }
 
@@ -361,16 +371,20 @@ export default function EscalaSemanal() {
       auxiliar_id: me.auxiliar_id, doutor_id: null
     }))
   }
-  function isTransportDouble(posto: PostoKey, turno: TurnoLetra): boolean {
-    return posto === "TRANSPORT" && turno === "M"
-  }
   function getCellDisplayName(data: string, turnoLetra: TurnoLetra, posto: PostoKey): string {
-    if (isTransportDouble(posto, turnoLetra)) {
+    const useFullName = (posto === "EXAM1" || posto === "EXAM2") && turnoLetra === "N"
+    if (isMultiPerson(posto, turnoLetra)) {
       const rows = getEscalas(data, turnoLetra, posto)
       return rows.map(r => {
         const name = r.auxiliar_id ? (auxiliares.find(a=>a.id===r.auxiliar_id)?.nome ?? "") : ""
-        return getFirstName(name)
+        return useFullName ? name : getFirstName(name)
       }).filter(Boolean).join("/")
+    }
+    if (useFullName) {
+      const esc = getEscala(data, turnoLetra, posto)
+      if (!esc) return ""
+      const name = esc.auxiliar_id ? (auxiliares.find(a=>a.id===esc.auxiliar_id)?.nome ?? "") : ""
+      return name
     }
     return getCellName(getEscala(data, turnoLetra, posto))
   }
@@ -379,7 +393,7 @@ export default function EscalaSemanal() {
   function openCell(data:string, turnoLetra:TurnoLetra, posto:PostoKey) {
     const tipo = getPostoTipo(posto, turnoLetra)
     setSelCell({ data, turnoLetra, posto, tipo })
-    if (isTransportDouble(posto, turnoLetra)) {
+    if (isMultiPerson(posto, turnoLetra)) {
       const rows = getEscalas(data, turnoLetra, posto)
       setSelPersonIds(rows.map(r => r.auxiliar_id ?? "").filter(Boolean))
       setSelPersonId("")
@@ -401,7 +415,7 @@ export default function EscalaSemanal() {
 
   async function saveEscala() {
     if (!selCell) return
-    const isDouble = isTransportDouble(selCell.posto, selCell.turnoLetra)
+    const isDouble = isMultiPerson(selCell.posto, selCell.turnoLetra)
     if (!isDouble && !selPersonId) return
     if (isDouble && selPersonIds.length === 0) return
 
@@ -511,8 +525,8 @@ export default function EscalaSemanal() {
   async function clearEscala() {
     if (!selCell) return
     closeDialog()
-    if (isTransportDouble(selCell.posto, selCell.turnoLetra)) {
-      // Apagar todas as linhas desta célula TRANSPORT+M
+    if (isMultiPerson(selCell.posto, selCell.turnoLetra)) {
+      // Multi-person cell: delete all rows for this cell
       const rows = escalas.filter(e =>
         e.data===selCell.data && e.turno_letra===selCell.turnoLetra && e.posto===selCell.posto && !e.id.startsWith("mensal_")
       )
@@ -869,7 +883,8 @@ export default function EscalaSemanal() {
   }
 
   // ── Modal helpers ─────────────────────────────────────────────────────────
-  const isDouble    = selCell ? isTransportDouble(selCell.posto, selCell.turnoLetra) : false
+  const isDouble    = selCell ? isMultiPerson(selCell.posto, selCell.turnoLetra) : false
+  const maxPersons  = selCell ? getMaxPersons(selCell.posto as PostoKey, selCell.turnoLetra as TurnoLetra) : 1
   const personList: Person[] = selCell?.tipo==="doutor" ? doutores : auxiliares
   const searchFiltered = personList.filter(p=>p.nome.toLowerCase().includes(search.toLowerCase()))
   const auxBlockReasons = new Map<string, string | null>(
@@ -997,7 +1012,7 @@ export default function EscalaSemanal() {
                     <td style={{ border:B,backgroundColor:SHIFT_BG[turno],textAlign:"center",fontWeight:700,fontSize:"12px",padding:"2px 6px",minWidth:"26px" }}>{turno}</td>
                     {POSTOS.map(p=>{
                       const opera = postoOpera(p.key as PostoKey, turno, dateStr)
-                      const isDouble = isTransportDouble(p.key as PostoKey, turno)
+                      const isDouble = isMultiPerson(p.key as PostoKey, turno)
                       const isDocCell = getPostoTipo(p.key as PostoKey, turno) === "doutor"
                       const esc = opera && !isDouble ? getEscala(dateStr,turno,p.key) : undefined
                       const derived = esc?.id?.startsWith("mensal_")
@@ -1104,10 +1119,14 @@ export default function EscalaSemanal() {
               </div>
             )}
 
-            {/* Info for TRANSPORT+M multi-select */}
-            {isDouble && (
+            {/* Info for multi-person cells */}
+            {isDouble && selCell && (
               <div style={{ margin:"0 20px 8px",padding:"6px 10px",background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:"8px",fontSize:"11px",color:"#1E40AF" }}>
-                Selecione até 2 auxiliares para Transportes — Manhã
+                {selCell.posto === "TRANSPORT"
+                  ? "Selecione até 2 auxiliares para Transportes — Manhã"
+                  : selCell.posto === "EXAM1"
+                    ? "Selecione até 2 auxiliares para Exames Comp. (1)"
+                    : `Selecione até ${maxPersons} auxiliares para Exames Comp. (2) — Noite`}
               </div>
             )}
 
@@ -1125,7 +1144,7 @@ export default function EscalaSemanal() {
                 </div>
               ) : filtered.map(p=>{
                 const isSel = isDouble ? selPersonIds.includes(p.id) : selPersonId===p.id
-                const isDisabledMulti = isDouble && !isSel && selPersonIds.length >= 2
+                const isDisabledMulti = isDouble && !isSel && selPersonIds.length >= maxPersons
                 const blockReason = auxBlockReasons.get(p.id) ?? null
                 const isBlocked = !!blockReason
                 const isDisabledFinal = isBlocked || isDisabledMulti
@@ -1135,7 +1154,7 @@ export default function EscalaSemanal() {
                 function handleClick() {
                   if (isDouble) {
                     setSelPersonIds(prev =>
-                      prev.includes(p.id) ? prev.filter(id=>id!==p.id) : prev.length < 2 ? [...prev, p.id] : prev
+                      prev.includes(p.id) ? prev.filter(id=>id!==p.id) : prev.length < maxPersons ? [...prev, p.id] : prev
                     )
                   } else {
                     setSelPersonId(isSel ? "" : p.id)
