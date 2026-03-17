@@ -599,185 +599,131 @@ export default function EscalaSemanal() {
     setUndoState(null); setUndoing(false)
   }
 
-  // ── Generate Table HTML ──────────────────────────────────────────────────
-  function generateTableHTML() {
+  // ── PDF / Print helpers ──────────────────────────────────────────────────
+  // Shared style constants for PDF rendering
+  const PDF_FONT = "'Segoe UI',Calibri,'Helvetica Neue',Arial,sans-serif"
+  const PDF_BORDER = "1px solid #AAAAAA"
+
+  // Returns a CSS inline style string for a header <th>
+  function pdfTh(bg: string, extra = ""): string {
+    return `font-family:${PDF_FONT};border:${PDF_BORDER};padding:5px 3px;background:${bg};font-size:8pt;font-weight:800;text-align:center;vertical-align:middle;color:#111;text-transform:uppercase;white-space:nowrap;${extra}`
+  }
+  // Returns a CSS inline style string for a data <td>
+  function pdfTd(bg: string, extra = ""): string {
+    return `font-family:${PDF_FONT};border:${PDF_BORDER};padding:4px 3px;background:${bg};font-size:7.5pt;font-weight:700;text-align:center;vertical-align:middle;color:#111;text-transform:uppercase;overflow:hidden;white-space:nowrap;${extra}`
+  }
+
+  // Builds the inner HTML content for PDF export (all styles inline)
+  function buildPDFContent(): string {
     const wt = `Escala semana ${format(weekDays[0],"d",{locale:ptBR})} a ${format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}`
-    const thS=(txt:string,bg:string,ex="")=>`<th style="border:1px solid #999;padding:6px 8px;background:${bg};font-size:10px;font-weight:700;text-align:center;white-space:nowrap;${ex}">${txt}</th>`
-    const tdS=(txt:string,bg:string,ex="")=>`<td style="border:1px solid #999;padding:4px 6px;background:${bg};font-size:10px;text-align:center;font-weight:${txt?"600":"400"};${ex}">${txt}</td>`
-    let rows=""
-    for(const [di,day] of weekDays.entries()){
-      const ds=format(day,"yyyy-MM-dd")
-      for(const [ti,turno] of TURNOS.entries()){
-        rows+="<tr>"
-        if(ti===0) rows+=`<td rowspan="3" style="border:1px solid #999;padding:8px;background:${DAY_BG[di%DAY_BG.length]};text-align:center;font-weight:700;font-size:12px;vertical-align:middle;min-width:50px;">${format(day,"d")}<br/><span style="font-size:11px;font-weight:600;">${DIAS_PT[di]}</span></td>`
-        rows+=tdS(turno,SHIFT_BG[turno as TurnoLetra],"font-weight:700;min-width:28px;font-size:11px;")
-        for(const p of POSTOS) rows+=tdS(getCellName(getEscala(ds,turno,p.key)),p.bg,"min-width:90px;")
-        rows+="</tr>"
+
+    // Shift row backgrounds
+    const SHIFT_PDF: Record<TurnoLetra, string> = { N:"#D4E8F5", M:"#D9F2DD", T:"#FFF2C0" }
+    // Per-posto cell background (inactive = grey)
+    const POSTO_PDF: Record<PostoKey, string> = {
+      RX_URG:"#FFFFFF", TAC2:"#FFFFFF", TAC1:"#FFFFFF",
+      EXAM1:"#EDE3D8", EXAM2:"#EDE3D8",
+      SALA6:"#D6EDBE", SALA7:"#D6EDBE",
+      TRANSPORT:"#FFE4BF",
+    }
+    // Header group backgrounds
+    const H1 = "#FFD700"   // main header row
+    const H2 = "#FFEC6E"   // sub-header row
+
+    // Column widths (px), total ≈ 1028px (fits 277mm A4 landscape at 3.78px/mm)
+    const W: Record<string, string> = {
+      day:"38px", turno:"22px",
+      RX_URG:"100px", TAC2:"90px", TAC1:"90px",
+      EXAM1:"110px", EXAM2:"130px",
+      SALA6:"90px", SALA7:"90px",
+      TRANSPORT:"110px",
+    }
+
+    let rows = ""
+    for (const [di, day] of weekDays.entries()) {
+      const ds = format(day, "yyyy-MM-dd")
+      const dayBg = DAY_BG[di % DAY_BG.length]
+      for (const [ti, turno] of TURNOS.entries()) {
+        const shiftBg = SHIFT_PDF[turno as TurnoLetra]
+        rows += "<tr>"
+        if (ti === 0) {
+          rows += `<td rowspan="3" style="${pdfTd(dayBg,"font-size:9pt;font-weight:900;vertical-align:middle;width:${W.day};")}">` +
+            `<div style="font-size:11pt;font-weight:900;line-height:1.1">${format(day,"d")}</div>` +
+            `<div style="font-size:7pt;font-weight:700;color:#555;margin-top:1px">${DIAS_PT[di]}</div>` +
+            `</td>`
+        }
+        rows += `<td style="${pdfTd(shiftBg,"font-size:9pt;font-weight:900;width:${W.turno};")}"><b>${turno}</b></td>`
+        for (const p of POSTOS) {
+          const opera = postoOpera(p.key as PostoKey, turno, ds)
+          const name = opera ? getCellDisplayName(ds, turno, p.key as PostoKey) : ""
+          const bg = !opera ? "#E8E8E8" : POSTO_PDF[p.key as PostoKey]
+          rows += `<td style="${pdfTd(bg,`width:${W[p.key]};${!opera?"color:#CCC;":""}`)}"><b>${name}</b></td>`
+        }
+        rows += "</tr>"
       }
     }
+
+    return `
+<div style="font-family:${PDF_FONT};background:white;padding:0;width:1028px;">
+  <div style="text-align:center;margin-bottom:8px;padding-bottom:8px;border-bottom:3px solid #1A3A4A;">
+    <div style="font-family:${PDF_FONT};font-size:14pt;font-weight:900;color:#1A3A4A;text-transform:uppercase;letter-spacing:0.5px">${wt}</div>
+  </div>
+  <table style="border-collapse:collapse;width:100%;table-layout:fixed;">
+    <colgroup>
+      <col style="width:${W.day}"/>
+      <col style="width:${W.turno}"/>
+      <col style="width:${W.RX_URG}"/>
+      <col style="width:${W.TAC2}"/>
+      <col style="width:${W.TAC1}"/>
+      <col style="width:${W.EXAM1}"/>
+      <col style="width:${W.EXAM2}"/>
+      <col style="width:${W.SALA6}"/>
+      <col style="width:${W.SALA7}"/>
+      <col style="width:${W.TRANSPORT}"/>
+    </colgroup>
+    <thead>
+      <tr>
+        <th rowspan="2" style="${pdfTh("#D9D9D9","width:"+W.day+";")}">Dia</th>
+        <th rowspan="2" style="${pdfTh("#D9D9D9","width:"+W.turno+";")}">T</th>
+        <th style="${pdfTh(H1,"width:"+W.RX_URG+";")}">RX URG</th>
+        <th style="${pdfTh(H1,"width:"+W.TAC2+";")}">TAC 2</th>
+        <th style="${pdfTh(H1,"width:"+W.TAC1+";")}">TAC 1</th>
+        <th colspan="2" style="${pdfTh(H1)}">Exames Complementares</th>
+        <th colspan="2" style="${pdfTh("#92D050")}">RX</th>
+        <th style="${pdfTh("#FFBE7B","width:"+W.TRANSPORT+";")}">Transportes INT/URG</th>
+      </tr>
+      <tr>
+        <th style="${pdfTh(H2,"width:"+W.RX_URG+";")}"></th>
+        <th style="${pdfTh(H2,"width:"+W.TAC2+";")}"></th>
+        <th style="${pdfTh(H2,"width:"+W.TAC1+";")}"></th>
+        <th style="${pdfTh(H2,"width:"+W.EXAM1+";font-size:7pt;")}">Eco Urg</th>
+        <th style="${pdfTh(H2,"width:"+W.EXAM2+";font-size:7pt;")}">Eco Complementar</th>
+        <th style="${pdfTh("#A8D890","width:"+W.SALA6+";font-size:7pt;")}">SALA 6 BB</th>
+        <th style="${pdfTh("#A8D890","width:"+W.SALA7+";font-size:7pt;")}">SALA 7 EXT</th>
+        <th style="${pdfTh("#FFCF99","width:"+W.TRANSPORT+";")}"></th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+</div>`
+  }
+
+  // ── Generate Table HTML (for printEscala standalone window) ───────────────
+  function generateTableHTML() {
+    const wt = `Escala semana ${format(weekDays[0],"d",{locale:ptBR})} a ${format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}`
     return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>${wt}</title>
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-    
-    body {
-      font-family: "Segoe UI", Arial, sans-serif;
-      background: #f5f5f5;
-      padding: 20px;
-    }
-    
-    .page {
-      background: white;
-      margin: 0 auto;
-      padding: 25px 30px;
-      max-width: 1200px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
-    .header {
-      text-align: center;
-      margin-bottom: 25px;
-      border-bottom: 3px solid #1A3A4A;
-      padding-bottom: 15px;
-    }
-    
-    .header h1 {
-      font-size: 18px;
-      font-weight: 700;
-      color: #1A3A4A;
-      margin-bottom: 5px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    .header p {
-      font-size: 12px;
-      color: #666;
-      margin: 0;
-    }
-    
-    .table-wrapper {
-      overflow-x: auto;
-      margin: 20px 0;
-    }
-    
-    table {
-      border-collapse: collapse;
-      width: 100%;
-      font-size: 10px;
-    }
-    
-    thead {
-      background: #f0f0f0;
-    }
-    
-    th {
-      border: 1px solid #999;
-      padding: 6px 4px;
-      background: #D9D9D9;
-      font-size: 9px;
-      font-weight: 700;
-      text-align: center;
-      white-space: nowrap;
-      color: #333;
-    }
-    
-    td {
-      border: 1px solid #999;
-      padding: 5px 4px;
-      text-align: center;
-      font-weight: 500;
-      background: white;
-      min-width: 45px;
-    }
-    
-    tbody tr:nth-child(even) {
-      background: #f9f9f9;
-    }
-    
-    /* Células de dados */
-    tbody td {
-      font-size: 9px;
-      padding: 4px 3px;
-    }
-    
-    .shift-cell {
-      font-weight: 700 !important;
-      font-size: 10px !important;
-      padding: 4px 4px !important;
-    }
-    
-    .day-header {
-      font-weight: 700 !important;
-      font-size: 11px !important;
-      vertical-align: middle;
-      min-width: 50px;
-    }
-    
-    /* Cores dos turnos */
-    .shift-n { background: #BDD7EE; color: #000; }
-    .shift-m { background: #C6EFCE; color: #000; }
-    .shift-t { background: #FFEB9C; color: #000; }
-    
-    @media print {
-      body {
-        background: white;
-        padding: 0;
-      }
-      .page {
-        box-shadow: none;
-        max-width: 100%;
-        margin: 0;
-        padding: 15mm;
-      }
-      .header {
-        page-break-after: avoid;
-      }
-      .table-wrapper {
-        page-break-inside: avoid;
-      }
-      table {
-        page-break-inside: avoid;
-      }
-    }
+    @page { size: A4 landscape; margin: 8mm 10mm; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Segoe UI',Calibri,Arial,sans-serif; background:white; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   </style>
 </head>
-<body>
-  <div class="page">
-    <div class="header">
-      <h1>📅 Escala Semanal</h1>
-      <p>${wt}</p>
-    </div>
-    
-    <div class="table-wrapper">
-      <table>
-        <thead>
-          <tr>
-            <th style="min-width:50px;text-align:center;">Dia</th>
-            <th style="min-width:28px;">Turno</th>
-            <th style="background:#FFD700;">RX URG</th>
-            <th style="background:#FFD700;">TAC 1</th>
-            <th style="background:#FFD700;">TAC 2</th>
-            <th style="background:#FFD700;">Exames<br/>Comp. 1</th>
-            <th style="background:#FFD700;">Exames<br/>Comp. 2</th>
-            <th style="background:#FFD700;">SALA 6<br/>BB</th>
-            <th style="background:#FFD700;">SALA 7<br/>EXT</th>
-            <th style="background:#FFD700;">Transportes<br/>INT/URG</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows}
-        </tbody>
-      </table>
-    </div>
-  </div>
+<body style="padding:10px">
+  ${buildPDFContent()}
 </body>
 </html>`
   }
@@ -793,25 +739,23 @@ export default function EscalaSemanal() {
   }
 
   function exportPDF() {
-    const element = document.createElement("div")
-    element.innerHTML = generateTableHTML()
-    
+    // Mount content into the real DOM at A4-landscape width so html2canvas
+    // picks up all inline styles correctly (innerHTML loses <head>/<style>)
+    const wrap = document.createElement("div")
+    wrap.style.cssText = "position:fixed;top:-10000px;left:-10000px;width:1048px;background:white;"
+    wrap.innerHTML = buildPDFContent()
+    document.body.appendChild(wrap)
+
     const opt: any = {
-      margin: 10,
+      margin: [6, 10, 6, 10],
       filename: `Escala_Semanal_${format(weekDays[0],"yyyy-MM-dd")}.pdf`,
-      image: { type: "png", quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { 
-        orientation: "landscape",
-        unit: "mm",
-        format: "a4",
-        putOnlyUsedFonts: true,
-        compress: true,
-      },
-      pagebreak: { mode: ["avoid-all", "css", "legacy"] }
+      image: { type: "jpeg", quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true, width: 1048, windowWidth: 1048 },
+      jsPDF: { orientation: "landscape", unit: "mm", format: "a4" },
     }
-    
-    html2pdf().set(opt).from(element).save()
+
+    html2pdf().set(opt).from(wrap).save()
+      .then(() => document.body.removeChild(wrap))
   }
 
   async function shareWA() {
