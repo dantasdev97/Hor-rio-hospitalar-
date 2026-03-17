@@ -5,7 +5,8 @@ import {
   ChevronLeft, ChevronRight, X, Check,
   FileDown, MessageCircle, Wand2, Trash2, RotateCcw, Loader2, Printer, Loader,
 } from "lucide-react"
-import html2pdf from "html2pdf.js"
+import jsPDF from "jspdf"
+import autoTable from "jspdf-autotable"
 import html2canvas from "html2canvas"
 import { supabase } from "@/lib/supabaseClient"
 import type { Auxiliar, Turno } from "@/types"
@@ -737,25 +738,102 @@ export default function EscalaMensal() {
   }
 
   function exportPDF() {
-    const element = document.createElement("div")
-    element.innerHTML = generateTableHTML()
-    
-    const opt: any = {
-      margin: 10,
-      filename: `Escala_Mensal_${format(currentDate,"yyyy-MM")}.pdf`,
-      image: { type: "png", quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { 
-        orientation: "landscape",
-        unit: "mm",
-        format: "a4",
-        putOnlyUsedFonts: true,
-        compress: true,
-      },
-      pagebreak: { mode: ["avoid-all", "css", "legacy"] }
+    // jsPDF + autoTable — PDF vectorial (texto nítido, 1 página, cores exactas)
+    type n = number
+
+    function hexToRgb(hex: string): [n,n,n] {
+      const h = hex.replace("#","")
+      return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)]
     }
-    
-    html2pdf().set(opt).from(element).save()
+
+    const WHT: [n,n,n] = [255,255,255]
+    const WKD: [n,n,n] = [229,231,235]   // fim de semana sem dados
+    const HDR: [n,n,n] = [217,217,217]   // cabeçalho dias úteis
+    const HDW: [n,n,n] = [181,188,199]   // cabeçalho fins de semana
+    const BLK: [n,n,n] = [0,0,0]
+
+    // Larguras: Nº=12, Nome=38, dias restantes dividem 227mm por nDias
+    const nDias   = days.length
+    const dayW    = Math.floor(227 / nDias)         // ex. 31 dias → 7mm; 28 → 8mm
+    const totalW  = 12 + 38 + nDias * dayW          // pode ser ≤277mm
+    const margin  = Math.max(8, (297 - totalW) / 2) // centrar horizontalmente
+
+    // ── Cabeçalho ────────────────────────────────────────────────────────────
+    const mesAno = format(currentDate,"MMMM yyyy",{locale:ptBR})
+    const mesAnoF = mesAno[0].toUpperCase() + mesAno.slice(1)
+
+    const dayHeaders = days.map(d => {
+      const dw = getDay(new Date(year, month, d))
+      const we = dw === 0 || dw === 6
+      return {
+        content: `${d}\n${["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"][dw]}`,
+        styles: {
+          fillColor: we ? HDW : HDR,
+          fontStyle: "bold" as const,
+          halign: "center" as const,
+          fontSize: 7,
+          textColor: we ? [180,40,40] as [n,n,n] : BLK,
+        }
+      }
+    })
+
+    const head = [
+      // linha 0 — título centrado, full-width
+      [{ content: `ESCALA MENSAL — ${mesAnoF.toUpperCase()}`, colSpan: 2 + nDias,
+         styles: { fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const,
+                   fillColor:WHT, fontSize:13, textColor:BLK, cellPadding:4 } }],
+      // linha 1 — nomes de coluna
+      [
+        { content:"Nº",   styles:{ fillColor:HDR, fontStyle:"bold" as const, halign:"center" as const, fontSize:8, textColor:BLK } },
+        { content:"Nome", styles:{ fillColor:HDR, fontStyle:"bold" as const, halign:"left" as const,   fontSize:8, textColor:BLK } },
+        ...dayHeaders,
+      ],
+    ]
+
+    // ── Corpo ─────────────────────────────────────────────────────────────────
+    const body = sortedAuxiliares.map(aux => {
+      const numCell = { content: aux.numero_mecanografico ?? "",
+        styles: { fontStyle:"bold" as const, halign:"center" as const, fontSize:7.5, textColor:BLK } }
+      const nameCell = { content: aux.nome,
+        styles: { fontStyle:"normal" as const, halign:"left" as const, fontSize:7.5, textColor:BLK } }
+
+      const dayCells = days.map(d => {
+        const e  = getEscala(aux.id, d)
+        const di = getCellDisplay(e)
+        const dw = getDay(new Date(year, month, d))
+        const we = dw === 0 || dw === 6
+        const bg: [n,n,n] = di ? hexToRgb(di.bg) : we ? WKD : WHT
+        const tc: [n,n,n] = di ? hexToRgb(di.text) : BLK
+        return {
+          content: di?.code ?? "",
+          styles: { fillColor:bg, textColor:tc, fontStyle:"bold" as const,
+                    halign:"center" as const, fontSize:7, cellPadding:1.5 }
+        }
+      })
+      return [numCell, nameCell, ...dayCells]
+    })
+
+    // ── Render ────────────────────────────────────────────────────────────────
+    const doc = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" })
+    autoTable(doc, {
+      head, body,
+      startY: 6,
+      margin: { left:margin, right:margin },
+      styles: {
+        fontSize:7.5, cellPadding:1.8, overflow:"ellipsize",
+        valign:"middle", halign:"center",
+        lineWidth:0.2, lineColor:[160,160,160] as [n,n,n],
+      },
+      headStyles: { fontStyle:"bold" },
+      columnStyles: {
+        0: { cellWidth:12, halign:"center" },
+        1: { cellWidth:38, halign:"left"   },
+        // dia columns fill the rest equally
+        ...Object.fromEntries(days.map((_,i) => [i+2, { cellWidth:dayW }]))
+      },
+      theme: "grid",
+    })
+    doc.save(`Escala_Mensal_${format(currentDate,"yyyy-MM")}.pdf`)
   }
 
   function printEscala() {

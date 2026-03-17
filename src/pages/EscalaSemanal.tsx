@@ -614,61 +614,71 @@ export default function EscalaSemanal() {
     return `font-family:${PDF_FONT};border:${PDF_BORDER};padding:4px 3px;background:${bg};font-size:7.5pt;font-weight:700;text-align:center;vertical-align:middle;color:#111;text-transform:uppercase;overflow:hidden;white-space:nowrap;${extra}`
   }
 
-  // Builds the inner HTML content for PDF export (all styles inline)
+  // Builds the inner HTML content for the print window (all styles inline)
   function buildPDFContent(): string {
-    const wt = `Escala semana ${format(weekDays[0],"d",{locale:ptBR})} a ${format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}`
+    // Paleta fiel à imagem de referência
+    const SHIFT_C: Record<TurnoLetra,string> = { N:"#BDD7EE", M:"#C6EFCE", T:"#FFC000" }
+    const DOC_C   = "#BFBFBF"   // células de doutor
+    const SALA_C  = "#92D050"   // SALA 6/7 com pessoa
+    const TRAN_C  = "#FFC000"   // TRANSPORT com pessoa
+    const YEL     = "#FFEB9C"   // cabeçalho / rodapé amarelo
+    const GRN     = "#92D050"   // cabeçalho grupo RX
+    const ORA     = "#FFC000"   // cabeçalho Transportes
 
-    // Shift row backgrounds
-    const SHIFT_PDF: Record<TurnoLetra, string> = { N:"#D4E8F5", M:"#D9F2DD", T:"#FFF2C0" }
-    // Per-posto cell background (inactive = grey)
-    const POSTO_PDF: Record<PostoKey, string> = {
-      RX_URG:"#FFFFFF", TAC2:"#FFFFFF", TAC1:"#FFFFFF",
-      EXAM1:"#EDE3D8", EXAM2:"#EDE3D8",
-      SALA6:"#D6EDBE", SALA7:"#D6EDBE",
-      TRANSPORT:"#FFE4BF",
-    }
-    // Header group backgrounds
-    const H1 = "#FFD700"   // main header row
-    const H2 = "#FFEC6E"   // sub-header row
+    // Formato do título idêntico ao PDF: "Escala semana D a D de Mês AAAA"
+    const monthYear = format(weekDays[6],"MMMM yyyy",{locale:ptBR})
+    const monthCap  = monthYear[0].toUpperCase() + monthYear.slice(1)
+    const wt = `Escala semana ${format(weekDays[0],"d")} a ${format(weekDays[6],"d")} de ${monthCap}`
 
-    // Column widths (px), total ≈ 1028px (fits 277mm A4 landscape at 3.78px/mm)
-    const W: Record<string, string> = {
-      day:"38px", turno:"22px",
-      RX_URG:"100px", TAC2:"90px", TAC1:"90px",
-      EXAM1:"110px", EXAM2:"130px",
-      SALA6:"90px", SALA7:"90px",
-      TRANSPORT:"110px",
+    // Larguras de coluna em px (≈ 1048px para A4 landscape com margens 6mm)
+    const W: Record<string,string> = {
+      day:"76px", turno:"30px",
+      RX_URG:"121px", TAC2:"114px", TAC1:"102px",
+      EXAM1:"125px", EXAM2:"129px",
+      SALA6:"103px", SALA7:"102px",
+      TRANSPORT:"148px",
     }
 
     let rows = ""
     for (const [di, day] of weekDays.entries()) {
       const ds = format(day, "yyyy-MM-dd")
-      const dayBg = DAY_BG[di % DAY_BG.length]
+      const dayLabel = `${format(day,"d")} - ${DIAS_PT[di]}`
       for (const [ti, turno] of TURNOS.entries()) {
-        const shiftBg = SHIFT_PDF[turno as TurnoLetra]
+        const shBg = SHIFT_C[turno as TurnoLetra]
         rows += "<tr>"
         if (ti === 0) {
-          rows += `<td rowspan="3" style="${pdfTd(dayBg,"font-size:9pt;font-weight:900;vertical-align:middle;width:${W.day};")}">` +
-            `<div style="font-size:11pt;font-weight:900;line-height:1.1">${format(day,"d")}</div>` +
-            `<div style="font-size:7pt;font-weight:700;color:#555;margin-top:1px">${DIAS_PT[di]}</div>` +
-            `</td>`
+          rows += `<td rowspan="3" style="${pdfTd("#FFFFFF",`font-size:9pt;font-weight:900;width:${W.day};`)}"><b>${dayLabel}</b></td>`
         }
-        rows += `<td style="${pdfTd(shiftBg,"font-size:9pt;font-weight:900;width:${W.turno};")}"><b>${turno}</b></td>`
+        rows += `<td style="${pdfTd(shBg,`font-size:9pt;font-weight:900;width:${W.turno};`)}"><b>${turno}</b></td>`
         for (const p of POSTOS) {
-          const opera = postoOpera(p.key as PostoKey, turno, ds)
-          const name = opera ? getCellDisplayName(ds, turno, p.key as PostoKey) : ""
-          const bg = !opera ? "#E8E8E8" : POSTO_PDF[p.key as PostoKey]
-          rows += `<td style="${pdfTd(bg,`width:${W[p.key]};${!opera?"color:#CCC;":""}`)}"><b>${name}</b></td>`
+          const opera   = postoOpera(p.key as PostoKey, turno as TurnoLetra, ds)
+          const name    = opera ? getCellDisplayName(ds, turno as TurnoLetra, p.key as PostoKey) : ""
+          const isDoc   = getPostoTipo(p.key as PostoKey, turno as TurnoLetra) === "doutor"
+          let bg: string
+          if (!opera)                                        bg = "#FFFFFF"
+          else if (isDoc)                                    bg = DOC_C
+          else if (p.key === "SALA6" || p.key === "SALA7")  bg = name ? SALA_C : "#FFFFFF"
+          else if (p.key === "TRANSPORT")                    bg = name ? TRAN_C : "#FFFFFF"
+          else                                               bg = shBg
+          rows += `<td style="${pdfTd(bg,`width:${W[p.key]};${!name?"color:#BBBBBB;":""}`)}"><b>${name}</b></td>`
         }
         rows += "</tr>"
       }
+      // separador fino entre dias
+      if (di < 6) rows += `<tr style="height:3px;"><td colspan="10" style="background:#FFFFFF;padding:0;border:none;height:3px;"></td></tr>`
     }
 
+    // rodapé com as 3 notas (fundo amarelo, bold, centrado)
+    const noteStyle = `font-family:${PDF_FONT};border:1px solid #AAAAAA;padding:3px 6px;background:${YEL};font-size:7pt;font-weight:700;text-align:center;color:#111;`
+    const notes = [
+      "TURNO SALA 6 E T15 - TRANSPORTE DE DOENTES MARCADOS - LEITOS - HIGIENIZAÇÃO SERVIÇO - RENDER RX P/REFEIÇÃO - APOIAR COLEGAS SEMPRE QUE POSSIVEL SOLICITADO",
+      "TURNO T15 SALA 7 - RENDE COLEGA DA TAC2 ÀS 18H30 E PERMANECE NA SALA ATÉ AO FECHO ÀS 20H30 - PÓS ESSA HORA VOLTA ÀS TAREFAS NORMAIS",
+      "TURNO TR - TRANSPORTE DE TAC´S E ECO´S PROVENIENTES DO SUG.",
+    ]
+    const noteRows = notes.map(n => `<tr><td colspan="10" style="${noteStyle}">${n}</td></tr>`).join("")
+
     return `
-<div style="font-family:${PDF_FONT};background:white;padding:0;width:1028px;">
-  <div style="text-align:center;margin-bottom:8px;padding-bottom:8px;border-bottom:3px solid #1A3A4A;">
-    <div style="font-family:${PDF_FONT};font-size:14pt;font-weight:900;color:#1A3A4A;text-transform:uppercase;letter-spacing:0.5px">${wt}</div>
-  </div>
+<div style="font-family:${PDF_FONT};background:white;padding:0;width:1048px;">
   <table style="border-collapse:collapse;width:100%;table-layout:fixed;">
     <colgroup>
       <col style="width:${W.day}"/>
@@ -684,46 +694,45 @@ export default function EscalaSemanal() {
     </colgroup>
     <thead>
       <tr>
-        <th rowspan="2" style="${pdfTh("#D9D9D9","width:"+W.day+";")}">Dia</th>
-        <th rowspan="2" style="${pdfTh("#D9D9D9","width:"+W.turno+";")}">T</th>
-        <th style="${pdfTh(H1,"width:"+W.RX_URG+";")}">RX URG</th>
-        <th style="${pdfTh(H1,"width:"+W.TAC2+";")}">TAC 2</th>
-        <th style="${pdfTh(H1,"width:"+W.TAC1+";")}">TAC 1</th>
-        <th colspan="2" style="${pdfTh(H1)}">Exames Complementares</th>
-        <th colspan="2" style="${pdfTh("#92D050")}">RX</th>
-        <th style="${pdfTh("#FFBE7B","width:"+W.TRANSPORT+";")}">Transportes INT/URG</th>
+        <th colspan="10" style="${pdfTh("#FFFFFF","font-size:13pt;padding:6px 4px;")}"><span style="font-size:13pt;font-weight:900;color:#111;">${wt}</span></th>
       </tr>
       <tr>
-        <th style="${pdfTh(H2,"width:"+W.RX_URG+";")}"></th>
-        <th style="${pdfTh(H2,"width:"+W.TAC2+";")}"></th>
-        <th style="${pdfTh(H2,"width:"+W.TAC1+";")}"></th>
-        <th style="${pdfTh(H2,"width:"+W.EXAM1+";font-size:7pt;")}">Eco Urg</th>
-        <th style="${pdfTh(H2,"width:"+W.EXAM2+";font-size:7pt;")}">Eco Complementar</th>
-        <th style="${pdfTh("#A8D890","width:"+W.SALA6+";font-size:7pt;")}">SALA 6 BB</th>
-        <th style="${pdfTh("#A8D890","width:"+W.SALA7+";font-size:7pt;")}">SALA 7 EXT</th>
-        <th style="${pdfTh("#FFCF99","width:"+W.TRANSPORT+";")}"></th>
+        <th rowspan="2" style="${pdfTh(YEL,"width:"+W.day+";")}"></th>
+        <th rowspan="2" style="${pdfTh(YEL,"width:"+W.turno+";")}"></th>
+        <th rowspan="2" style="${pdfTh(YEL,"width:"+W.RX_URG+";")}">RX URG</th>
+        <th rowspan="2" style="${pdfTh(YEL,"width:"+W.TAC2+";")}">TAC 2</th>
+        <th rowspan="2" style="${pdfTh(YEL,"width:"+W.TAC1+";")}">TAC 1</th>
+        <th colspan="2" rowspan="2" style="${pdfTh(YEL)}">Exames Complementares</th>
+        <th colspan="2" style="${pdfTh(GRN)}">RX</th>
+        <th rowspan="2" style="${pdfTh(ORA,"width:"+W.TRANSPORT+";font-size:7pt;")}">Transportes INT/URG</th>
+      </tr>
+      <tr>
+        <th style="${pdfTh(GRN,"width:"+W.SALA6+";font-size:7pt;")}">SALA 6 BB</th>
+        <th style="${pdfTh(GRN,"width:"+W.SALA7+";font-size:7pt;")}">SALA 7 EXT</th>
       </tr>
     </thead>
-    <tbody>${rows}</tbody>
+    <tbody>${rows}${noteRows}</tbody>
   </table>
 </div>`
   }
 
   // ── Generate Table HTML (for printEscala standalone window) ───────────────
   function generateTableHTML() {
-    const wt = `Escala semana ${format(weekDays[0],"d",{locale:ptBR})} a ${format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}`
+    const monthYear = format(weekDays[6],"MMMM yyyy",{locale:ptBR})
+    const monthCap  = monthYear[0].toUpperCase() + monthYear.slice(1)
+    const wt = `Escala semana ${format(weekDays[0],"d")} a ${format(weekDays[6],"d")} de ${monthCap}`
     return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>${wt}</title>
   <style>
-    @page { size: A4 landscape; margin: 8mm 10mm; }
+    @page { size: A4 landscape; margin: 6mm 8mm; }
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family:'Segoe UI',Calibri,Arial,sans-serif; background:white; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   </style>
 </head>
-<body style="padding:10px">
+<body>
   ${buildPDFContent()}
 </body>
 </html>`
@@ -862,20 +871,19 @@ export default function EscalaSemanal() {
                  fillColor:YEL, fontSize:7, textColor:BLK, cellPadding:2 } }])
     }
 
-    // ── Opções da tabela (partilhadas entre o 1.º e 2.º pass) ────────────────
-    const margin = 10
-    const pageH  = 210   // A4 landscape
-    const tableOpts: Parameters<typeof autoTable>[1] = {
+    // ── Render (tabela no topo → 1 única página garantida) ───────────────────
+    const doc = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" })
+    autoTable(doc, {
       head, body,
-      startY: 0,
-      margin: { left:margin, right:margin },
+      startY: 4,   // topo da página — evita overflow para 2.ª página
+      margin: { left:10, right:10 },
       tableWidth: 277,
       styles: {
         fontSize:8, cellPadding:1.8, overflow:"ellipsize",
         valign:"middle", halign:"center",
         lineWidth:0.22, lineColor:[160,160,160] as [n,n,n],
       },
-      headStyles: { fontStyle:"bold", cellPadding:2.5 },
+      headStyles: { fontStyle:"bold", cellPadding:2 },
       columnStyles: {
         0: { cellWidth:CW.dia   },
         1: { cellWidth:CW.t     },
@@ -889,18 +897,7 @@ export default function EscalaSemanal() {
         9: { cellWidth:CW.tr    },
       },
       theme: "grid",
-    }
-
-    // 1.ª passagem — medir altura real da tabela
-    const dummy = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" })
-    autoTable(dummy, tableOpts)
-    const tableH = (dummy as any).lastAutoTable.finalY as number
-    // centra verticalmente; garante margem mínima de 8 mm
-    const startY = Math.max(8, (pageH - tableH) / 2)
-
-    // 2.ª passagem — renderizar com startY centrado
-    const doc = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" })
-    autoTable(doc, { ...tableOpts, startY })
+    })
     doc.save(`Escala_Semanal_${format(weekDays[0],"yyyy-MM-dd")}.pdf`)
   }
 
