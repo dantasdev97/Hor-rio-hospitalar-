@@ -739,23 +739,18 @@ export default function EscalaSemanal() {
   }
 
   function exportPDF() {
-    // Mount content into the real DOM at A4-landscape width so html2canvas
-    // picks up all inline styles correctly (innerHTML loses <head>/<style>)
-    const wrap = document.createElement("div")
-    wrap.style.cssText = "position:fixed;top:-10000px;left:-10000px;width:1048px;background:white;"
-    wrap.innerHTML = buildPDFContent()
-    document.body.appendChild(wrap)
-
+    // Pass the HTML string directly — all styles are inline inside buildPDFContent()
+    // so they survive html2pdf's internal innerHTML assignment without any style loss.
+    // This avoids the "fixed element offscreen = blank canvas" problem.
     const opt: any = {
       margin: [6, 10, 6, 10],
       filename: `Escala_Semanal_${format(weekDays[0],"yyyy-MM-dd")}.pdf`,
       image: { type: "jpeg", quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, width: 1048, windowWidth: 1048 },
+      html2canvas: { scale: 2, useCORS: true, windowWidth: 1048 },
       jsPDF: { orientation: "landscape", unit: "mm", format: "a4" },
+      pagebreak: { mode: "avoid-all" },
     }
-
-    html2pdf().set(opt).from(wrap).save()
-      .then(() => document.body.removeChild(wrap))
+    html2pdf().set(opt).from(buildPDFContent()).save()
   }
 
   async function shareWA() {
