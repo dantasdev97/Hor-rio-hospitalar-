@@ -40,14 +40,15 @@ const POSTO_SCHEDULE: Record<PostoKey, { shifts: TurnoLetra[]; days: DayType[] }
   SALA7:     { shifts: ["M","T"],    days: ["weekday","saturday","sunday"] },
 }
 
-function getPostoTipo(_posto: PostoKey, _turno: TurnoLetra): PostoTipo {
+function getPostoTipo(posto: PostoKey, turno: TurnoLetra): PostoTipo {
+  if ((posto === "EXAM1" || posto === "EXAM2") && turno === "N") return "doutor"
   return "auxiliar"
 }
 // Returns maximum number of persons allowed in a cell (1 = single, 2 = double, 3 = triple)
 function getMaxPersons(posto: PostoKey, turno: TurnoLetra): number {
   if (posto === "TRANSPORT" && turno === "M") return 2
-  if (posto === "EXAM1") return 2
-  if (posto === "EXAM2" && turno === "N") return 3
+  if (posto === "EXAM1" && turno !== "N") return 2   // M e T: 2 aux; N: doutor (1)
+  if (posto === "EXAM2" && turno === "M") return 3   // M: 3 aux; N: doutor (1)
   return 1
 }
 function isMultiPerson(posto: PostoKey, turno: TurnoLetra): boolean {
@@ -372,21 +373,21 @@ export default function EscalaSemanal() {
     }))
   }
   function getCellDisplayName(data: string, turnoLetra: TurnoLetra, posto: PostoKey): string {
-    const useFullName = (posto === "EXAM1" || posto === "EXAM2") && turnoLetra === "N"
+    const tipo = getPostoTipo(posto, turnoLetra)
+    const isDocCell = tipo === "doutor"
     if (isMultiPerson(posto, turnoLetra)) {
       const rows = getEscalas(data, turnoLetra, posto)
       return rows.map(r => {
         const name = r.auxiliar_id ? (auxiliares.find(a=>a.id===r.auxiliar_id)?.nome ?? "") : ""
-        return useFullName ? name : getFirstName(name)
+        return getFirstName(name)
       }).filter(Boolean).join("/")
     }
-    if (useFullName) {
-      const esc = getEscala(data, turnoLetra, posto)
-      if (!esc) return ""
-      const name = esc.auxiliar_id ? (auxiliares.find(a=>a.id===esc.auxiliar_id)?.nome ?? "") : ""
-      return name
+    const esc = getEscala(data, turnoLetra, posto)
+    if (!esc) return ""
+    if (isDocCell) {
+      return doutores.find(d => d.id === esc.doutor_id)?.nome ?? ""
     }
-    return getCellName(getEscala(data, turnoLetra, posto))
+    return getCellName(esc)
   }
 
   // ── Dialog ────────────────────────────────────────────────────────────────
@@ -1126,7 +1127,7 @@ export default function EscalaSemanal() {
                   ? "Selecione até 2 auxiliares para Transportes — Manhã"
                   : selCell.posto === "EXAM1"
                     ? "Selecione até 2 auxiliares para Exames Comp. (1)"
-                    : `Selecione até ${maxPersons} auxiliares para Exames Comp. (2) — Noite`}
+                    : `Selecione até ${maxPersons} auxiliares para Exames Comp. (2) — Manhã`}
               </div>
             )}
 
