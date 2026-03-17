@@ -18,8 +18,8 @@ const DAY_BG = ["#DCE6F1","#EBF1DE","#E6E0EC","#DDEEFF","#FFE6CC","#FFF2CC","#F2
 
 const POSTOS = [
   { key:"RX_URG",    label:"RX URG",             bg:"#FFFFFF" },
-  { key:"TAC1",      label:"TAC 1",              bg:"#FFFFFF" },
   { key:"TAC2",      label:"TAC 2",              bg:"#FFFFFF" },
+  { key:"TAC1",      label:"TAC 1",              bg:"#FFFFFF" },
   { key:"EXAM1",     label:"Exames Comp. (1)",   bg:"#C4B09A" },
   { key:"EXAM2",     label:"Exames Comp. (2)",   bg:"#C4B09A" },
   { key:"SALA6",     label:"SALA 6 BB",          bg:"#92D050" },
@@ -987,15 +987,19 @@ export default function EscalaSemanal() {
                 <tr style={{ background: "#f0f0f0" }}>
                   <th colSpan={2} style={{ ...thBase, backgroundColor: "#D9D9D9", minWidth: "70px" }}/>
                   <th style={{ ...thBase, backgroundColor: "#FFD700" }}>RX URG</th>
-                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>TAC 1</th>
                   <th style={{ ...thBase, backgroundColor: "#FFD700" }}>TAC 2</th>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>TAC 1</th>
                   <th colSpan={2} style={{ ...thBase, backgroundColor: "#FFD700" }}>Exames Complementares</th>
                   <th colSpan={2} style={{ ...thBase, backgroundColor: "#FFD700" }}>RX</th>
                   <th style={{ ...thBase, backgroundColor: "#FFD700" }}>Transportes<br/>INT/URG</th>
                 </tr>
                 <tr style={{ background: "#f0f0f0" }}>
                   <th colSpan={2} style={{ ...thBase, backgroundColor: "#D9D9D9" }}/>
-                  {(["RX_URG","TAC1","TAC2","EXAM1","EXAM2"] as PostoKey[]).map(k=><th key={k} style={{ ...thBase, backgroundColor: "#FFD700" }}/>)}
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}/>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}/>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}/>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>Eco Urg</th>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>Eco Complementar</th>
                   <th style={{ ...thBase, backgroundColor: "#FFD700" }}>SALA 6 BB</th>
                   <th style={{ ...thBase, backgroundColor: "#FFD700" }}>SALA 7 EXT</th>
                   <th style={{ ...thBase, backgroundColor: "#FFD700" }}/>
@@ -1220,6 +1224,11 @@ export default function EscalaSemanal() {
                   title="Cria override para anular a derivação do mensal"
                   onMouseEnter={e=>{e.currentTarget.style.background="#FFF7ED";e.currentTarget.style.borderColor="#C2410C"}}
                   onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#FED7AA"}}>Remover (mensal)</button>
+              )}
+              {isDouble && selPersonIds.length > 0 && (
+                <button onClick={()=>setSelPersonIds([])} style={{ background:"none",border:"1.5px solid #FFCDD2",borderRadius:"8px",padding:"7px 14px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#E57373",transition:"all 0.12s" }}
+                  onMouseEnter={e=>{e.currentTarget.style.background="#FFF5F5";e.currentTarget.style.borderColor="#E57373"}}
+                  onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#FFCDD2"}}>Limpar</button>
               )}
               <button onClick={closeDialog} style={{ background:"#F4F4F4",border:"none",borderRadius:"8px",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#555",transition:"background 0.12s" }}
                 onMouseEnter={e=>(e.currentTarget.style.background="#E8E8E8")} onMouseLeave={e=>(e.currentTarget.style.background="#F4F4F4")}>Cancelar</button>
