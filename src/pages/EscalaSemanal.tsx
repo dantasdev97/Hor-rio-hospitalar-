@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react"
 import { format, startOfWeek, addDays, getDay, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { ChevronLeft, ChevronRight, Search, X, Check, FileDown, MessageCircle, Loader2, Trash2, RotateCcw, Printer, Loader, Info } from "lucide-react"
-import html2pdf from "html2pdf.js"
+import jsPDF from "jspdf"
+import autoTable from "jspdf-autotable"
 import html2canvas from "html2canvas"
 import { supabase } from "@/lib/supabaseClient"
 import { Button } from "@/components/ui/button"
@@ -18,8 +19,8 @@ const DAY_BG = ["#DCE6F1","#EBF1DE","#E6E0EC","#DDEEFF","#FFE6CC","#FFF2CC","#F2
 
 const POSTOS = [
   { key:"RX_URG",    label:"RX URG",             bg:"#FFFFFF" },
-  { key:"TAC1",      label:"TAC 1",              bg:"#FFFFFF" },
   { key:"TAC2",      label:"TAC 2",              bg:"#FFFFFF" },
+  { key:"TAC1",      label:"TAC 1",              bg:"#FFFFFF" },
   { key:"EXAM1",     label:"Exames Comp. (1)",   bg:"#C4B09A" },
   { key:"EXAM2",     label:"Exames Comp. (2)",   bg:"#C4B09A" },
   { key:"SALA6",     label:"SALA 6 BB",          bg:"#92D050" },
@@ -41,7 +42,18 @@ const POSTO_SCHEDULE: Record<PostoKey, { shifts: TurnoLetra[]; days: DayType[] }
 }
 
 function getPostoTipo(posto: PostoKey, turno: TurnoLetra): PostoTipo {
-  return (posto === "EXAM1" || posto === "EXAM2") && turno === "N" ? "doutor" : "auxiliar"
+  if ((posto === "EXAM1" || posto === "EXAM2") && turno === "N") return "doutor"
+  return "auxiliar"
+}
+// Returns maximum number of persons allowed in a cell (1 = single, 2 = double, 3 = triple)
+function getMaxPersons(posto: PostoKey, turno: TurnoLetra): number {
+  if (posto === "TRANSPORT" && turno === "M") return 2
+  if (posto === "EXAM1" && turno !== "N") return 2   // M e T: 2 aux; N: doutor (1)
+  if (posto === "EXAM2" && turno === "M") return 3   // M: 3 aux; N: doutor (1)
+  return 1
+}
+function isMultiPerson(posto: PostoKey, turno: TurnoLetra): boolean {
+  return getMaxPersons(posto, turno) > 1
 }
 function postoInfo(key: PostoKey) { return POSTOS.find(p => p.key===key)! }
 
@@ -129,7 +141,7 @@ export default function EscalaSemanal() {
   const [selOriginalId, setSelOriginalId] = useState("")          // id pré-carregado ao abrir modal
   const [modalTouched,  setModalTouched]  = useState(false)       // utilizador interagiu com modal
   const [search,       setSearch]       = useState("")
-  const [filterTab,    setFilterTab]    = useState<"available" | "restricted">("available")
+  const [filterTab,    setFilterTab]    = useState<"available" | "restricted" | "allocated">("available")
   const searchRef = useRef<HTMLInputElement>(null)
   const tableRef = useRef<HTMLTableElement>(null)
 
@@ -266,8 +278,9 @@ export default function EscalaSemanal() {
     turnoLetra: TurnoLetra,
     data: string
   ): string | null {
-    // Regra 1: Aux com turno N no mesmo dia não pode fazer turno M
-    if (turnoLetra === "M") {
+    const cfg = loadCfg()
+    // Regra 1: Aux com turno N no mesmo dia não pode fazer turno M (só se bloquearTurnosConsecutivos)
+    if (turnoLetra === "M" && cfg.bloquearTurnosConsecutivos) {
       const hasNocMensal = mensalEntries.some(me => {
         if (me.auxiliar_id !== auxId || me.data !== data || !me.turno_id) return false
         const t = turnosData.find(t => t.id === me.turno_id)
@@ -278,13 +291,15 @@ export default function EscalaSemanal() {
       )
       if (hasNocMensal || hasNocSemanal) return "Trabalha no turno noturno neste dia"
     }
-    // Regra 2: Aux já alocado noutro posto no mesmo dia/turno
-    for (const p of POSTOS) {
-      if (p.key === posto) continue
-      if (!postoOpera(p.key, turnoLetra, data)) continue
-      const esc = getEscala(data, turnoLetra, p.key)
-      if (esc?.auxiliar_id === auxId) {
-        return `Já alocado em ${p.label} neste turno`
+    // Regra 2: Aux já alocado noutro posto no mesmo dia/turno (só se alertasConflito)
+    if (cfg.alertasConflito) {
+      for (const p of POSTOS) {
+        if (p.key === posto) continue
+        if (!postoOpera(p.key, turnoLetra, data)) continue
+        const esc = getEscala(data, turnoLetra, p.key)
+        if (esc?.auxiliar_id === auxId) {
+          return `Já alocado em ${p.label} neste turno`
+        }
       }
     }
     return null
@@ -294,15 +309,39 @@ export default function EscalaSemanal() {
     // 1. Manual semanal override takes priority
     const manual = escalas.find(e => e.data===data && e.turno_letra===turnoLetra && e.posto===posto)
     if (manual) return manual
-    // 2. Derive from mensal: find an aux whose turno covers this posto and produces this turno letter
-    const mensal = mensalEntries.find(me => {
-      if (me.data !== data || !me.auxiliar_id || !me.turno_id) return false
-      const t = turnosData.find(t => t.id === me.turno_id)
+    // 2. Aux explicitly assigned to a DIFFERENT posto for this day+turno
+    //    → exclude from derivation here (prevents "bleed" from multi-posto turnos)
+    const busyAuxIds = new Set(
+      escalas
+        .filter(e => e.data===data && e.turno_letra===turnoLetra && e.auxiliar_id && e.posto!==posto)
+        .map(e => e.auxiliar_id!)
+    )
+    // 3. Mensal candidates that cover this posto, not blocked
+    const candidates = mensalEntries.filter(me => {
+      if (me.data!==data || !me.auxiliar_id || !me.turno_id) return false
+      if (busyAuxIds.has(me.auxiliar_id)) return false
+      const t = turnosData.find(t => t.id===me.turno_id)
       if (!t || !t.postos.includes(posto)) return false
       return turnoToLetra(t) === turnoLetra
     })
-    if (!mensal?.auxiliar_id) return undefined
-    return { id:`mensal_${mensal.id}`, data, posto, turno_letra:turnoLetra, auxiliar_id:mensal.auxiliar_id, doutor_id:null }
+    if (!candidates.length) return undefined
+    // 4. Single candidate → return directly
+    if (candidates.length === 1) {
+      const me = candidates[0]
+      return { id:`mensal_${me.id}`, data, posto, turno_letra:turnoLetra, auxiliar_id:me.auxiliar_id, doutor_id:null }
+    }
+    // 5. Multiple candidates (e.g. 2×N5) → distribute by posto index among
+    //    aux-type postos with this turnoLetra, ordered by the POSTOS array
+    const auxLetraPostos = POSTOS
+      .filter(p =>
+        POSTO_SCHEDULE[p.key]?.shifts.includes(turnoLetra as TurnoLetra) &&
+        getPostoTipo(p.key as PostoKey, turnoLetra as TurnoLetra) === "auxiliar"
+      )
+      .map(p => p.key)
+    const postoIdx = auxLetraPostos.indexOf(posto as PostoKey)
+    const idx = postoIdx >= 0 && postoIdx < candidates.length ? postoIdx : 0
+    const me = candidates[idx]
+    return { id:`mensal_${me.id}`, data, posto, turno_letra:turnoLetra, auxiliar_id:me.auxiliar_id, doutor_id:null }
   }
   function getFirstName(fullName: string): string {
     return fullName.split(" ")[0]
@@ -317,8 +356,14 @@ export default function EscalaSemanal() {
   function getEscalas(data: string, turnoLetra: string, posto: string): EscalaRow[] {
     const manual = escalas.filter(e => e.data===data && e.turno_letra===turnoLetra && e.posto===posto)
     if (manual.length > 0) return manual
+    const busyAuxIds = new Set(
+      escalas
+        .filter(e => e.data===data && e.turno_letra===turnoLetra && e.auxiliar_id && e.posto!==posto)
+        .map(e => e.auxiliar_id!)
+    )
     const mensalResults = mensalEntries.filter(me => {
       if (me.data !== data || !me.auxiliar_id || !me.turno_id) return false
+      if (busyAuxIds.has(me.auxiliar_id)) return false
       const t = turnosData.find(t => t.id === me.turno_id)
       if (!t || !t.postos.includes(posto)) return false
       return turnoToLetra(t) === turnoLetra
@@ -328,25 +373,29 @@ export default function EscalaSemanal() {
       auxiliar_id: me.auxiliar_id, doutor_id: null
     }))
   }
-  function isTransportDouble(posto: PostoKey, turno: TurnoLetra): boolean {
-    return posto === "TRANSPORT" && turno === "M"
-  }
   function getCellDisplayName(data: string, turnoLetra: TurnoLetra, posto: PostoKey): string {
-    if (isTransportDouble(posto, turnoLetra)) {
+    const tipo = getPostoTipo(posto, turnoLetra)
+    const isDocCell = tipo === "doutor"
+    if (isMultiPerson(posto, turnoLetra)) {
       const rows = getEscalas(data, turnoLetra, posto)
       return rows.map(r => {
         const name = r.auxiliar_id ? (auxiliares.find(a=>a.id===r.auxiliar_id)?.nome ?? "") : ""
         return getFirstName(name)
       }).filter(Boolean).join("/")
     }
-    return getCellName(getEscala(data, turnoLetra, posto))
+    const esc = getEscala(data, turnoLetra, posto)
+    if (!esc) return ""
+    if (isDocCell) {
+      return doutores.find(d => d.id === esc.doutor_id)?.nome ?? ""
+    }
+    return getCellName(esc)
   }
 
   // ── Dialog ────────────────────────────────────────────────────────────────
   function openCell(data:string, turnoLetra:TurnoLetra, posto:PostoKey) {
     const tipo = getPostoTipo(posto, turnoLetra)
     setSelCell({ data, turnoLetra, posto, tipo })
-    if (isTransportDouble(posto, turnoLetra)) {
+    if (isMultiPerson(posto, turnoLetra)) {
       const rows = getEscalas(data, turnoLetra, posto)
       setSelPersonIds(rows.map(r => r.auxiliar_id ?? "").filter(Boolean))
       setSelPersonId("")
@@ -368,7 +417,7 @@ export default function EscalaSemanal() {
 
   async function saveEscala() {
     if (!selCell) return
-    const isDouble = isTransportDouble(selCell.posto, selCell.turnoLetra)
+    const isDouble = isMultiPerson(selCell.posto, selCell.turnoLetra)
     if (!isDouble && !selPersonId) return
     if (isDouble && selPersonIds.length === 0) return
 
@@ -478,8 +527,8 @@ export default function EscalaSemanal() {
   async function clearEscala() {
     if (!selCell) return
     closeDialog()
-    if (isTransportDouble(selCell.posto, selCell.turnoLetra)) {
-      // Apagar todas as linhas desta célula TRANSPORT+M
+    if (isMultiPerson(selCell.posto, selCell.turnoLetra)) {
+      // Multi-person cell: delete all rows for this cell
       const rows = escalas.filter(e =>
         e.data===selCell.data && e.turno_letra===selCell.turnoLetra && e.posto===selCell.posto && !e.id.startsWith("mensal_")
       )
@@ -493,20 +542,31 @@ export default function EscalaSemanal() {
       setEscalas(p=>p.filter(e=>e.id!==ex.id))
       const {error}=await supabase.from("escalas").delete().eq("id",ex.id)
       if(error) fetchAll()
+      // Also remove the corresponding mensal entry for this aux+date
+      const auxId = ex.auxiliar_id
+      if (auxId) {
+        const mensalEntry = mensalEntries.find(me => me.auxiliar_id === auxId && me.data === selCell.data)
+        if (mensalEntry) {
+          await supabase.from("escalas").delete().eq("id", mensalEntry.id)
+          setMensalEntries(p => p.filter(me => me.id !== mensalEntry.id))
+        }
+      }
     }
   }
 
-  // Insere override semanal com null para anular a derivação do mensal
+  // Remove a derivação do mensal apagando o registo mensal real
   async function clearDerivedOverride() {
     if (!selCell) return
+    // Find the derived entry to get the aux id
+    const ex = getEscala(selCell.data, selCell.turnoLetra, selCell.posto)
+    const auxId = ex?.auxiliar_id
     closeDialog()
-    const payload = { data:selCell.data, posto:selCell.posto, turno_letra:selCell.turnoLetra, tipo_escala:"semanal", status:"alocado", auxiliar_id:null as string|null, doutor_id:null as string|null }
-    const { data:rows } = await supabase.from("escalas").insert(payload).select("id")
-    if (rows?.length) {
-      const nr: EscalaRow = { id:rows[0].id, ...payload }
-      setEscalas(p => [...p, nr])
-    } else {
-      fetchAll()
+    if (auxId) {
+      const mensalEntry = mensalEntries.find(me => me.auxiliar_id === auxId && me.data === selCell.data)
+      if (mensalEntry) {
+        await supabase.from("escalas").delete().eq("id", mensalEntry.id)
+        setMensalEntries(p => p.filter(me => me.id !== mensalEntry.id))
+      }
     }
   }
 
@@ -540,185 +600,131 @@ export default function EscalaSemanal() {
     setUndoState(null); setUndoing(false)
   }
 
-  // ── Generate Table HTML ──────────────────────────────────────────────────
-  function generateTableHTML() {
+  // ── PDF / Print helpers ──────────────────────────────────────────────────
+  // Shared style constants for PDF rendering
+  const PDF_FONT = "'Segoe UI',Calibri,'Helvetica Neue',Arial,sans-serif"
+  const PDF_BORDER = "1px solid #AAAAAA"
+
+  // Returns a CSS inline style string for a header <th>
+  function pdfTh(bg: string, extra = ""): string {
+    return `font-family:${PDF_FONT};border:${PDF_BORDER};padding:5px 3px;background:${bg};font-size:8pt;font-weight:800;text-align:center;vertical-align:middle;color:#111;text-transform:uppercase;white-space:nowrap;${extra}`
+  }
+  // Returns a CSS inline style string for a data <td>
+  function pdfTd(bg: string, extra = ""): string {
+    return `font-family:${PDF_FONT};border:${PDF_BORDER};padding:4px 3px;background:${bg};font-size:7.5pt;font-weight:700;text-align:center;vertical-align:middle;color:#111;text-transform:uppercase;overflow:hidden;white-space:nowrap;${extra}`
+  }
+
+  // Builds the inner HTML content for PDF export (all styles inline)
+  function buildPDFContent(): string {
     const wt = `Escala semana ${format(weekDays[0],"d",{locale:ptBR})} a ${format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}`
-    const thS=(txt:string,bg:string,ex="")=>`<th style="border:1px solid #999;padding:6px 8px;background:${bg};font-size:10px;font-weight:700;text-align:center;white-space:nowrap;${ex}">${txt}</th>`
-    const tdS=(txt:string,bg:string,ex="")=>`<td style="border:1px solid #999;padding:4px 6px;background:${bg};font-size:10px;text-align:center;font-weight:${txt?"600":"400"};${ex}">${txt}</td>`
-    let rows=""
-    for(const [di,day] of weekDays.entries()){
-      const ds=format(day,"yyyy-MM-dd")
-      for(const [ti,turno] of TURNOS.entries()){
-        rows+="<tr>"
-        if(ti===0) rows+=`<td rowspan="3" style="border:1px solid #999;padding:8px;background:${DAY_BG[di%DAY_BG.length]};text-align:center;font-weight:700;font-size:12px;vertical-align:middle;min-width:50px;">${format(day,"d")}<br/><span style="font-size:11px;font-weight:600;">${DIAS_PT[di]}</span></td>`
-        rows+=tdS(turno,SHIFT_BG[turno as TurnoLetra],"font-weight:700;min-width:28px;font-size:11px;")
-        for(const p of POSTOS) rows+=tdS(getCellName(getEscala(ds,turno,p.key)),p.bg,"min-width:90px;")
-        rows+="</tr>"
+
+    // Shift row backgrounds
+    const SHIFT_PDF: Record<TurnoLetra, string> = { N:"#D4E8F5", M:"#D9F2DD", T:"#FFF2C0" }
+    // Per-posto cell background (inactive = grey)
+    const POSTO_PDF: Record<PostoKey, string> = {
+      RX_URG:"#FFFFFF", TAC2:"#FFFFFF", TAC1:"#FFFFFF",
+      EXAM1:"#EDE3D8", EXAM2:"#EDE3D8",
+      SALA6:"#D6EDBE", SALA7:"#D6EDBE",
+      TRANSPORT:"#FFE4BF",
+    }
+    // Header group backgrounds
+    const H1 = "#FFD700"   // main header row
+    const H2 = "#FFEC6E"   // sub-header row
+
+    // Column widths (px), total ≈ 1028px (fits 277mm A4 landscape at 3.78px/mm)
+    const W: Record<string, string> = {
+      day:"38px", turno:"22px",
+      RX_URG:"100px", TAC2:"90px", TAC1:"90px",
+      EXAM1:"110px", EXAM2:"130px",
+      SALA6:"90px", SALA7:"90px",
+      TRANSPORT:"110px",
+    }
+
+    let rows = ""
+    for (const [di, day] of weekDays.entries()) {
+      const ds = format(day, "yyyy-MM-dd")
+      const dayBg = DAY_BG[di % DAY_BG.length]
+      for (const [ti, turno] of TURNOS.entries()) {
+        const shiftBg = SHIFT_PDF[turno as TurnoLetra]
+        rows += "<tr>"
+        if (ti === 0) {
+          rows += `<td rowspan="3" style="${pdfTd(dayBg,"font-size:9pt;font-weight:900;vertical-align:middle;width:${W.day};")}">` +
+            `<div style="font-size:11pt;font-weight:900;line-height:1.1">${format(day,"d")}</div>` +
+            `<div style="font-size:7pt;font-weight:700;color:#555;margin-top:1px">${DIAS_PT[di]}</div>` +
+            `</td>`
+        }
+        rows += `<td style="${pdfTd(shiftBg,"font-size:9pt;font-weight:900;width:${W.turno};")}"><b>${turno}</b></td>`
+        for (const p of POSTOS) {
+          const opera = postoOpera(p.key as PostoKey, turno, ds)
+          const name = opera ? getCellDisplayName(ds, turno, p.key as PostoKey) : ""
+          const bg = !opera ? "#E8E8E8" : POSTO_PDF[p.key as PostoKey]
+          rows += `<td style="${pdfTd(bg,`width:${W[p.key]};${!opera?"color:#CCC;":""}`)}"><b>${name}</b></td>`
+        }
+        rows += "</tr>"
       }
     }
+
+    return `
+<div style="font-family:${PDF_FONT};background:white;padding:0;width:1028px;">
+  <div style="text-align:center;margin-bottom:8px;padding-bottom:8px;border-bottom:3px solid #1A3A4A;">
+    <div style="font-family:${PDF_FONT};font-size:14pt;font-weight:900;color:#1A3A4A;text-transform:uppercase;letter-spacing:0.5px">${wt}</div>
+  </div>
+  <table style="border-collapse:collapse;width:100%;table-layout:fixed;">
+    <colgroup>
+      <col style="width:${W.day}"/>
+      <col style="width:${W.turno}"/>
+      <col style="width:${W.RX_URG}"/>
+      <col style="width:${W.TAC2}"/>
+      <col style="width:${W.TAC1}"/>
+      <col style="width:${W.EXAM1}"/>
+      <col style="width:${W.EXAM2}"/>
+      <col style="width:${W.SALA6}"/>
+      <col style="width:${W.SALA7}"/>
+      <col style="width:${W.TRANSPORT}"/>
+    </colgroup>
+    <thead>
+      <tr>
+        <th rowspan="2" style="${pdfTh("#D9D9D9","width:"+W.day+";")}">Dia</th>
+        <th rowspan="2" style="${pdfTh("#D9D9D9","width:"+W.turno+";")}">T</th>
+        <th style="${pdfTh(H1,"width:"+W.RX_URG+";")}">RX URG</th>
+        <th style="${pdfTh(H1,"width:"+W.TAC2+";")}">TAC 2</th>
+        <th style="${pdfTh(H1,"width:"+W.TAC1+";")}">TAC 1</th>
+        <th colspan="2" style="${pdfTh(H1)}">Exames Complementares</th>
+        <th colspan="2" style="${pdfTh("#92D050")}">RX</th>
+        <th style="${pdfTh("#FFBE7B","width:"+W.TRANSPORT+";")}">Transportes INT/URG</th>
+      </tr>
+      <tr>
+        <th style="${pdfTh(H2,"width:"+W.RX_URG+";")}"></th>
+        <th style="${pdfTh(H2,"width:"+W.TAC2+";")}"></th>
+        <th style="${pdfTh(H2,"width:"+W.TAC1+";")}"></th>
+        <th style="${pdfTh(H2,"width:"+W.EXAM1+";font-size:7pt;")}">Eco Urg</th>
+        <th style="${pdfTh(H2,"width:"+W.EXAM2+";font-size:7pt;")}">Eco Complementar</th>
+        <th style="${pdfTh("#A8D890","width:"+W.SALA6+";font-size:7pt;")}">SALA 6 BB</th>
+        <th style="${pdfTh("#A8D890","width:"+W.SALA7+";font-size:7pt;")}">SALA 7 EXT</th>
+        <th style="${pdfTh("#FFCF99","width:"+W.TRANSPORT+";")}"></th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+</div>`
+  }
+
+  // ── Generate Table HTML (for printEscala standalone window) ───────────────
+  function generateTableHTML() {
+    const wt = `Escala semana ${format(weekDays[0],"d",{locale:ptBR})} a ${format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}`
     return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>${wt}</title>
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-    
-    body {
-      font-family: "Segoe UI", Arial, sans-serif;
-      background: #f5f5f5;
-      padding: 20px;
-    }
-    
-    .page {
-      background: white;
-      margin: 0 auto;
-      padding: 25px 30px;
-      max-width: 1200px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
-    .header {
-      text-align: center;
-      margin-bottom: 25px;
-      border-bottom: 3px solid #1A3A4A;
-      padding-bottom: 15px;
-    }
-    
-    .header h1 {
-      font-size: 18px;
-      font-weight: 700;
-      color: #1A3A4A;
-      margin-bottom: 5px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    .header p {
-      font-size: 12px;
-      color: #666;
-      margin: 0;
-    }
-    
-    .table-wrapper {
-      overflow-x: auto;
-      margin: 20px 0;
-    }
-    
-    table {
-      border-collapse: collapse;
-      width: 100%;
-      font-size: 10px;
-    }
-    
-    thead {
-      background: #f0f0f0;
-    }
-    
-    th {
-      border: 1px solid #999;
-      padding: 6px 4px;
-      background: #D9D9D9;
-      font-size: 9px;
-      font-weight: 700;
-      text-align: center;
-      white-space: nowrap;
-      color: #333;
-    }
-    
-    td {
-      border: 1px solid #999;
-      padding: 5px 4px;
-      text-align: center;
-      font-weight: 500;
-      background: white;
-      min-width: 45px;
-    }
-    
-    tbody tr:nth-child(even) {
-      background: #f9f9f9;
-    }
-    
-    /* Células de dados */
-    tbody td {
-      font-size: 9px;
-      padding: 4px 3px;
-    }
-    
-    .shift-cell {
-      font-weight: 700 !important;
-      font-size: 10px !important;
-      padding: 4px 4px !important;
-    }
-    
-    .day-header {
-      font-weight: 700 !important;
-      font-size: 11px !important;
-      vertical-align: middle;
-      min-width: 50px;
-    }
-    
-    /* Cores dos turnos */
-    .shift-n { background: #BDD7EE; color: #000; }
-    .shift-m { background: #C6EFCE; color: #000; }
-    .shift-t { background: #FFEB9C; color: #000; }
-    
-    @media print {
-      body {
-        background: white;
-        padding: 0;
-      }
-      .page {
-        box-shadow: none;
-        max-width: 100%;
-        margin: 0;
-        padding: 15mm;
-      }
-      .header {
-        page-break-after: avoid;
-      }
-      .table-wrapper {
-        page-break-inside: avoid;
-      }
-      table {
-        page-break-inside: avoid;
-      }
-    }
+    @page { size: A4 landscape; margin: 8mm 10mm; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Segoe UI',Calibri,Arial,sans-serif; background:white; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   </style>
 </head>
-<body>
-  <div class="page">
-    <div class="header">
-      <h1>📅 Escala Semanal</h1>
-      <p>${wt}</p>
-    </div>
-    
-    <div class="table-wrapper">
-      <table>
-        <thead>
-          <tr>
-            <th style="min-width:50px;text-align:center;">Dia</th>
-            <th style="min-width:28px;">Turno</th>
-            <th style="background:#FFD700;">RX URG</th>
-            <th style="background:#FFD700;">TAC 1</th>
-            <th style="background:#FFD700;">TAC 2</th>
-            <th style="background:#FFD700;">Exames<br/>Comp. 1</th>
-            <th style="background:#FFD700;">Exames<br/>Comp. 2</th>
-            <th style="background:#FFD700;">SALA 6<br/>BB</th>
-            <th style="background:#FFD700;">SALA 7<br/>EXT</th>
-            <th style="background:#FFD700;">Transportes<br/>INT/URG</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows}
-        </tbody>
-      </table>
-    </div>
-  </div>
+<body style="padding:10px">
+  ${buildPDFContent()}
 </body>
 </html>`
   }
@@ -734,25 +740,144 @@ export default function EscalaSemanal() {
   }
 
   function exportPDF() {
-    const element = document.createElement("div")
-    element.innerHTML = generateTableHTML()
-    
-    const opt: any = {
-      margin: 10,
-      filename: `Escala_Semanal_${format(weekDays[0],"yyyy-MM-dd")}.pdf`,
-      image: { type: "png", quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { 
-        orientation: "landscape",
-        unit: "mm",
-        format: "a4",
-        putOnlyUsedFonts: true,
-        compress: true,
-      },
-      pagebreak: { mode: ["avoid-all", "css", "legacy"] }
+    // ── Cores (fiéis à imagem de referência) ─────────────────────────────────
+    const YEL:  [n,n,n] = [255,235,156]  // amarelo cabeçalho / título
+    const GRN:  [n,n,n] = [169,208,142]  // verde grupo RX (SALA 6/7)
+    const ORA:  [n,n,n] = [255,192,0]    // laranja Transportes cabeçalho
+    const WHT:  [n,n,n] = [255,255,255]  // branco (inactivo / vazio)
+    const DOC:  [n,n,n] = [191,191,191]  // cinza médio para células de doutor
+    const SALA_C: [n,n,n] = [146,208,80] // verde células SALA 6/7 com pessoas
+    const TRS_C:  [n,n,n] = [255,192,0]  // laranja células TRANSPORT com pessoas
+    const SHFT: Record<TurnoLetra,[n,n,n]> = {
+      N:[189,215,238], M:[198,239,206], T:[255,235,156]
     }
-    
-    html2pdf().set(opt).from(element).save()
+    type n = number
+
+    // ── Configuração de colunas ───────────────────────────────────────────────
+    // Total = 277mm (A4 landscape 297mm − 2×10mm margem)
+    const CW = { dia:22, t:9, rxurg:31, tac2:29, tac1:27, e1:33, e2:34, s6:28, s7:27, tr:37 }
+    // soma: 22+9+31+29+27+33+34+28+27+37 = 277 ✓
+
+    const s = (extra: object = {}) => ({ fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const, ...extra })
+
+    // ── Cabeçalho ─────────────────────────────────────────────────────────────
+    const titleText = `Escala semana ${format(weekDays[0],"d",{locale:ptBR})} A ${format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}`
+    const head = [
+      // Linha 0 — título full-width
+      [{ content:titleText, colSpan:10, styles:s({ fillColor:YEL, fontSize:13, cellPadding:4 }) }],
+      // Linha 1 — grupos
+      [
+        { content:"", rowSpan:2, styles:s({ fillColor:YEL }) },
+        { content:"", rowSpan:2, styles:s({ fillColor:YEL }) },
+        { content:"RX URG",                rowSpan:2, styles:s({ fillColor:YEL, fontSize:9 }) },
+        { content:"TAC 2",                 rowSpan:2, styles:s({ fillColor:YEL, fontSize:9 }) },
+        { content:"TAC 1",                 rowSpan:2, styles:s({ fillColor:YEL, fontSize:9 }) },
+        { content:"Exames Complementares", colSpan:2, rowSpan:2, styles:s({ fillColor:YEL, fontSize:9 }) },
+        { content:"RX",                    colSpan:2, styles:s({ fillColor:GRN, fontSize:9 }) },
+        { content:"Transportes\nINT/URG",  rowSpan:2, styles:s({ fillColor:ORA, fontSize:8 }) },
+      ],
+      // Linha 2 — sub-grupos (só SALA 6 e SALA 7)
+      [
+        { content:"SALA 6 BB",  styles:s({ fillColor:GRN, fontSize:8 }) },
+        { content:"SALA 7 EXT", styles:s({ fillColor:GRN, fontSize:8 }) },
+      ],
+    ]
+
+    // ── Corpo ─────────────────────────────────────────────────────────────────
+    const body: any[] = []
+
+    for (const [di, day] of weekDays.entries()) {
+      const ds = format(day,"yyyy-MM-dd")
+      const dayLabel = `${format(day,"d")} - ${DIAS_PT[di]}`
+
+      for (const [ti, turno] of TURNOS.entries()) {
+        const shiftRgb = SHFT[turno as TurnoLetra]
+        const row: any[] = []
+
+        // Coluna dia (rowspan 3)
+        if (ti === 0) {
+          row.push({ content:dayLabel, rowSpan:3,
+            styles:s({ fillColor:shiftRgb, fontSize:9, cellPadding:2 }) })
+        }
+        // Coluna turno
+        row.push({ content:turno, styles:s({ fillColor:shiftRgb, fontSize:9 }) })
+
+        // Colunas de posto
+        for (const p of POSTOS) {
+          const opera = postoOpera(p.key as PostoKey, turno as TurnoLetra, ds)
+          const name  = opera ? getCellDisplayName(ds, turno as TurnoLetra, p.key as PostoKey) : ""
+          const isDoc = getPostoTipo(p.key as PostoKey, turno as TurnoLetra) === "doutor"
+
+          let bg: [n,n,n]
+          if (!opera)                                       bg = WHT
+          else if (isDoc)                                   bg = DOC
+          else if (p.key === "SALA6" || p.key === "SALA7") bg = name ? SALA_C : WHT
+          else if (p.key === "TRANSPORT")                   bg = name ? TRS_C  : WHT
+          else                                              bg = shiftRgb
+
+          row.push({ content:name,
+            styles:{ fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const,
+              fillColor:bg, fontSize:8,
+              textColor: name ? [0,0,0] as [n,n,n] : [190,190,190] as [n,n,n] } })
+        }
+        body.push(row)
+      }
+
+      // Linha separadora entre dias (fina, branca)
+      if (di < 6) {
+        body.push(Array.from({length:10}, () =>
+          ({ content:"", styles:{ fillColor:WHT, minCellHeight:2, cellPadding:0 } })
+        ))
+      }
+    }
+
+    // ── Rodapé (3 linhas amarelas com notas) ─────────────────────────────────
+    const notes = [
+      "TURNO SALA 6 E T15 - TRANSPORTE DE DOENTES MARCADOS - LEITOS - HIGIENIZAÇÃO SERVIÇO - RENDER RX P/REFEIÇÃO - APOIAR COLEGAS SEMPRE QUE POSSIVEL SOLICITADO",
+      "TURNO T15 SALA 7 - RENDE COLEGA DA TAC2 ÀS 18H30 E PERMANECE NA SALA ATÉ AO FECHO ÀS 20H30 - PÓS ESSA HORA VOLTA ÀS TAREFAS NORMAIS",
+      "TURNO TR - TRANSPORTE DE TAC´S E ECO´S PROVENIENTES DO SUG.",
+    ]
+    for (const note of notes) {
+      body.push([{ content:note, colSpan:10,
+        styles:{ fontStyle:"bold" as const, halign:"center" as const, valign:"middle" as const,
+          fillColor:YEL, fontSize:7.5, textColor:[0,0,0] as [n,n,n] } }])
+    }
+
+    // ── Render (2 passes para centrar verticalmente) ──────────────────────────
+    const margin = 10
+    const pageH  = 210
+    const tableOpts: Parameters<typeof autoTable>[1] = {
+      head, body,
+      startY: 0,
+      margin: { left:margin, right:margin },
+      tableWidth: 277,
+      styles:     { fontSize:8, cellPadding:2, overflow:"ellipsize", valign:"middle", halign:"center", lineWidth:0.2, lineColor:[128,128,128] as [n,n,n] },
+      headStyles: { fontStyle:"bold", fontSize:9 },
+      columnStyles: {
+        0: { cellWidth:CW.dia  },
+        1: { cellWidth:CW.t    },
+        2: { cellWidth:CW.rxurg},
+        3: { cellWidth:CW.tac2 },
+        4: { cellWidth:CW.tac1 },
+        5: { cellWidth:CW.e1   },
+        6: { cellWidth:CW.e2   },
+        7: { cellWidth:CW.s6   },
+        8: { cellWidth:CW.s7   },
+        9: { cellWidth:CW.tr   },
+      },
+      theme: "grid",
+    }
+
+    // 1.ª passagem: medir altura real
+    const dummy = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" })
+    autoTable(dummy, tableOpts)
+    const tableH = (dummy as any).lastAutoTable.finalY as number
+    const startY = Math.max(margin, (pageH - tableH) / 2)
+
+    // 2.ª passagem: renderizar centrado
+    const doc = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" })
+    autoTable(doc, { ...tableOpts, startY })
+    doc.save(`Escala_Semanal_${format(weekDays[0],"yyyy-MM-dd")}.pdf`)
   }
 
   async function shareWA() {
@@ -825,7 +950,8 @@ export default function EscalaSemanal() {
   }
 
   // ── Modal helpers ─────────────────────────────────────────────────────────
-  const isDouble    = selCell ? isTransportDouble(selCell.posto, selCell.turnoLetra) : false
+  const isDouble    = selCell ? isMultiPerson(selCell.posto, selCell.turnoLetra) : false
+  const maxPersons  = selCell ? getMaxPersons(selCell.posto as PostoKey, selCell.turnoLetra as TurnoLetra) : 1
   const personList: Person[] = selCell?.tipo==="doutor" ? doutores : auxiliares
   const searchFiltered = personList.filter(p=>p.nome.toLowerCase().includes(search.toLowerCase()))
   const auxBlockReasons = new Map<string, string | null>(
@@ -838,7 +964,15 @@ export default function EscalaSemanal() {
   )
   const availableList = searchFiltered.filter(p => selCell ? !auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data) : true)
   const restrictedList = searchFiltered.filter(p => selCell ? auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data) : false)
-  const baseFiltered = filterTab === "available" ? availableList : restrictedList
+  const allocatedTodayList = selCell
+    ? searchFiltered.filter(p =>
+        escalas.some(e => e.auxiliar_id === p.id && e.data === selCell.data) ||
+        mensalEntries.some(me => me.auxiliar_id === p.id && me.data === selCell.data)
+      )
+    : []
+  const baseFiltered = filterTab === "available" ? availableList
+    : filterTab === "restricted" ? restrictedList
+    : allocatedTodayList
   // Blocked (operacional) shown last within each tab
   const filtered = [...baseFiltered].sort((a, b) =>
     Number(!!(auxBlockReasons.get(a.id))) - Number(!!(auxBlockReasons.get(b.id)))
@@ -919,15 +1053,19 @@ export default function EscalaSemanal() {
                 <tr style={{ background: "#f0f0f0" }}>
                   <th colSpan={2} style={{ ...thBase, backgroundColor: "#D9D9D9", minWidth: "70px" }}/>
                   <th style={{ ...thBase, backgroundColor: "#FFD700" }}>RX URG</th>
-                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>TAC 1</th>
                   <th style={{ ...thBase, backgroundColor: "#FFD700" }}>TAC 2</th>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>TAC 1</th>
                   <th colSpan={2} style={{ ...thBase, backgroundColor: "#FFD700" }}>Exames Complementares</th>
                   <th colSpan={2} style={{ ...thBase, backgroundColor: "#FFD700" }}>RX</th>
                   <th style={{ ...thBase, backgroundColor: "#FFD700" }}>Transportes<br/>INT/URG</th>
                 </tr>
                 <tr style={{ background: "#f0f0f0" }}>
                   <th colSpan={2} style={{ ...thBase, backgroundColor: "#D9D9D9" }}/>
-                  {(["RX_URG","TAC1","TAC2","EXAM1","EXAM2"] as PostoKey[]).map(k=><th key={k} style={{ ...thBase, backgroundColor: "#FFD700" }}/>)}
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}/>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}/>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}/>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>Eco Urg</th>
+                  <th style={{ ...thBase, backgroundColor: "#FFD700" }}>Eco Complementar</th>
                   <th style={{ ...thBase, backgroundColor: "#FFD700" }}>SALA 6 BB</th>
                   <th style={{ ...thBase, backgroundColor: "#FFD700" }}>SALA 7 EXT</th>
                   <th style={{ ...thBase, backgroundColor: "#FFD700" }}/>
@@ -945,7 +1083,7 @@ export default function EscalaSemanal() {
                     <td style={{ border:B,backgroundColor:SHIFT_BG[turno],textAlign:"center",fontWeight:700,fontSize:"12px",padding:"2px 6px",minWidth:"26px" }}>{turno}</td>
                     {POSTOS.map(p=>{
                       const opera = postoOpera(p.key as PostoKey, turno, dateStr)
-                      const isDouble = isTransportDouble(p.key as PostoKey, turno)
+                      const isDouble = isMultiPerson(p.key as PostoKey, turno)
                       const isDocCell = getPostoTipo(p.key as PostoKey, turno) === "doutor"
                       const esc = opera && !isDouble ? getEscala(dateStr,turno,p.key) : undefined
                       const derived = esc?.id?.startsWith("mensal_")
@@ -1036,6 +1174,13 @@ export default function EscalaSemanal() {
                   Disponíveis ({availableList.length})
                 </button>
                 <button
+                  onClick={()=>{ setFilterTab("allocated"); setModalTouched(true) }}
+                  style={{ flex:1,padding:"6px 0",borderRadius:"8px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,transition:"all 0.15s",
+                    background:filterTab==="allocated"?"#B45309":"#F4F4F4",
+                    color:filterTab==="allocated"?"#FFF":"#555" }}>
+                  Alocados hoje ({allocatedTodayList.length})
+                </button>
+                <button
                   onClick={()=>{ setFilterTab("restricted"); setModalTouched(true) }}
                   style={{ flex:1,padding:"6px 0",borderRadius:"8px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:600,transition:"all 0.15s",
                     background:filterTab==="restricted"?"#DC2626":"#F4F4F4",
@@ -1045,10 +1190,14 @@ export default function EscalaSemanal() {
               </div>
             )}
 
-            {/* Info for TRANSPORT+M multi-select */}
-            {isDouble && (
+            {/* Info for multi-person cells */}
+            {isDouble && selCell && (
               <div style={{ margin:"0 20px 8px",padding:"6px 10px",background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:"8px",fontSize:"11px",color:"#1E40AF" }}>
-                Selecione até 2 auxiliares para Transportes — Manhã
+                {selCell.posto === "TRANSPORT"
+                  ? "Selecione até 2 auxiliares para Transportes — Manhã"
+                  : selCell.posto === "EXAM1"
+                    ? "Selecione até 2 auxiliares para Exames Comp. (1)"
+                    : `Selecione até ${maxPersons} auxiliares para Exames Comp. (2) — Manhã`}
               </div>
             )}
 
@@ -1060,11 +1209,13 @@ export default function EscalaSemanal() {
                     ? `Nenhum ${selCell?.tipo==="doutor"?"doutor":"auxiliar"} cadastrado.`
                     : filterTab==="available"
                       ? "Nenhum auxiliar disponível neste turno."
-                      : "Nenhum auxiliar com restrição encontrado."}
+                      : filterTab==="restricted"
+                        ? "Nenhum auxiliar com restrição encontrado."
+                        : "Nenhum auxiliar alocado hoje."}
                 </div>
               ) : filtered.map(p=>{
                 const isSel = isDouble ? selPersonIds.includes(p.id) : selPersonId===p.id
-                const isDisabledMulti = isDouble && !isSel && selPersonIds.length >= 2
+                const isDisabledMulti = isDouble && !isSel && selPersonIds.length >= maxPersons
                 const blockReason = auxBlockReasons.get(p.id) ?? null
                 const isBlocked = !!blockReason
                 const isDisabledFinal = isBlocked || isDisabledMulti
@@ -1074,7 +1225,7 @@ export default function EscalaSemanal() {
                 function handleClick() {
                   if (isDouble) {
                     setSelPersonIds(prev =>
-                      prev.includes(p.id) ? prev.filter(id=>id!==p.id) : prev.length < 2 ? [...prev, p.id] : prev
+                      prev.includes(p.id) ? prev.filter(id=>id!==p.id) : prev.length < maxPersons ? [...prev, p.id] : prev
                     )
                   } else {
                     setSelPersonId(isSel ? "" : p.id)
@@ -1104,21 +1255,17 @@ export default function EscalaSemanal() {
               const bReason = getAuxBlockReason(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data)
               const hasRestr = auxTemRestricao(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data)
               const auxNome = auxiliares.find(a => a.id === selPersonId)?.nome ?? "Auxiliar"
+              // Só mostrar bloqueio quando o aux foi alterado (evita ruído para o aux já atribuído)
               if (bReason && isChanged) return (
                 <div style={{ margin:"0 20px",padding:"8px 12px",background:"#FEE2E2",border:"1px solid #FCA5A5",borderRadius:"8px",fontSize:"12px",color:"#991B1B",display:"flex",alignItems:"center",gap:"6px" }}>
                   🔒 {bReason} — <strong>{auxNome}</strong> não pode ser alocado neste turno.
                 </div>
               )
-              if (bReason && !isChanged) return (
-                <div style={{ margin:"0 20px",padding:"8px 12px",background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:"8px",fontSize:"12px",color:"#9A3412",display:"flex",alignItems:"center",gap:"6px" }}>
-                  ℹ️ Atenção: <strong>{auxNome}</strong> — {bReason}.
-                </div>
-              )
-              if (hasRestr) {
+              if (hasRestr && isChanged) {
                 const tipoRestr = getRestricaoDescricao(selPersonId, selCell.posto, selCell.turnoLetra, selCell.data)
                 return (
                   <div style={{ margin:"0 20px",padding:"8px 12px",background:"#FEF3C7",border:"1px solid #FCD34D",borderRadius:"8px",fontSize:"12px",color:"#92400E",display:"flex",alignItems:"center",gap:"6px" }}>
-                    ⚠️ <strong>{auxNome}</strong> tem {tipoRestr} bloqueado.
+                    ⚠️ <strong>{auxNome}</strong> tem {tipoRestr} — verifique antes de guardar.
                   </div>
                 )
               }
@@ -1143,6 +1290,11 @@ export default function EscalaSemanal() {
                   title="Cria override para anular a derivação do mensal"
                   onMouseEnter={e=>{e.currentTarget.style.background="#FFF7ED";e.currentTarget.style.borderColor="#C2410C"}}
                   onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#FED7AA"}}>Remover (mensal)</button>
+              )}
+              {isDouble && selPersonIds.length > 0 && (
+                <button onClick={()=>setSelPersonIds([])} style={{ background:"none",border:"1.5px solid #FFCDD2",borderRadius:"8px",padding:"7px 14px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#E57373",transition:"all 0.12s" }}
+                  onMouseEnter={e=>{e.currentTarget.style.background="#FFF5F5";e.currentTarget.style.borderColor="#E57373"}}
+                  onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#FFCDD2"}}>Limpar</button>
               )}
               <button onClick={closeDialog} style={{ background:"#F4F4F4",border:"none",borderRadius:"8px",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#555",transition:"background 0.12s" }}
                 onMouseEnter={e=>(e.currentTarget.style.background="#E8E8E8")} onMouseLeave={e=>(e.currentTarget.style.background="#F4F4F4")}>Cancelar</button>
