@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { format, getDaysInMonth, startOfMonth, getDay, parseISO, addDays } from "date-fns"
+import { useNavigate } from "react-router-dom"
+import { format, getDaysInMonth, startOfMonth, getDay, parseISO, addDays, startOfWeek } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import {
   ChevronLeft, ChevronRight, X, Check,
-  FileDown, MessageCircle, Wand2, Trash2, RotateCcw, Loader2, Printer, Loader,
+  FileDown, MessageCircle, Wand2, Trash2, RotateCcw, Loader2, Printer, Loader, CalendarDays,
 } from "lucide-react"
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
@@ -18,6 +19,8 @@ interface EscalaRow {
   turno_id: string | null; codigo_especial: string | null
 }
 interface UndoState { inserted: EscalaRow[]; deleted: EscalaRow[] }
+// Registos da escala semanal (para mostrar na mensal quando não há registo mensal)
+interface SemanaisRow { id: string; data: string; auxiliar_id: string | null; turno_letra: string; posto: string }
 
 const SPECIAL = [
   { code: "D",   label: "Descanso",            bg: "#D1D5DB", text: "#374151" },
@@ -37,14 +40,25 @@ function loadCfg() {
 
 // ─── Helpers de turno noturno e descanso ─────────────────────────────────────
 function isNoturnoTurno(t: Turno): boolean {
-  // Usa horario_inicio se disponível; senão recai no nome
-  if (t.horario_inicio && t.horario_inicio !== "00:00") return t.horario_inicio >= "20:00"
+  // Normaliza para HH:MM (Supabase pode devolver HH:MM:SS)
+  const inicio = (t.horario_inicio || "").slice(0, 5)
+  if (inicio && inicio !== "00:00") return inicio >= "20:00"
   return t.nome.toUpperCase().startsWith("N")
 }
 function toMinutes(time: string): number {
   const [h, m] = time.split(":").map(Number)
   return (h || 0) * 60 + (m || 0)
 }
+// Calcula duração de um turno em horas (suporta turnos nocturnos onde fim < início)
+function calcShiftHours(t: Turno): number {
+  if (!t.horario_inicio || !t.horario_fim) return 8 // fallback
+  const startMin = toMinutes(t.horario_inicio)
+  const endMin   = toMinutes(t.horario_fim)
+  let diff = endMin - startMin
+  if (diff <= 0) diff += 1440 // turno nocturno cruza meia-noite
+  return diff / 60
+}
+
 // Calcula horas de descanso entre fim do turno anterior (dia d) e início do turno seguinte (dia d+1)
 function restHoursBetween(prev: { horario_inicio: string; horario_fim: string }, nextInicio: string): number {
   if (!prev.horario_inicio || !prev.horario_fim || !nextInicio) return 24
@@ -143,10 +157,12 @@ function ConfirmModal({ title, body, onConfirm, onCancel }: { title:string;body:
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function EscalaMensal() {
+  const navigate = useNavigate()
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [auxiliares, setAuxiliares]   = useState<Auxiliar[]>([])
   const [turnos, setTurnos]           = useState<Turno[]>([])
   const [escalas, setEscalas]         = useState<EscalaRow[]>([])
+  const [escalasSemanais, setEscalasSemanais] = useState<SemanaisRow[]>([])
   const [loading, setLoading]         = useState(true)
   const [saving, setSaving]           = useState(false)
   const [generating, setGenerating]   = useState(false)
@@ -167,6 +183,9 @@ export default function EscalaMensal() {
   const [drawerAux, setDrawerAux]     = useState<Auxiliar | null>(null)
   const [openSec, setOpenSec] = useState({ ausencia:true, cobertura:true, descanso:true, excesso:true })
   const [resolvidoBanner, setResolvidoBanner] = useState(0)  // nº de alertas resolvidos recentemente
+  const [substitutoModalOpen, setSubstitutoModalOpen] = useState(false)
+  const [substitutoAuxId, setSubstitutoAuxId] = useState<string | null>(null)
+  const [substitutoData, setSubstitutoData] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const tableRef  = useRef<HTMLTableElement>(null)
   const prevAlertIds = useRef(new Set<string>())
@@ -184,8 +203,8 @@ export default function EscalaMensal() {
       return na - nb
     }), [auxiliares])
 
-  // Alertas reactivos — recalcula sempre que escalas/auxiliares/turnos mudam
-  const alertas = useMemo(() => loading ? [] : calcularAlertas(), [escalas, auxiliares, turnos, year, month, loading])
+  // Alertas reactivos — recalcula sempre que escalas/auxiliares/turnos/semanais mudam
+  const alertas = useMemo(() => loading ? [] : calcularAlertas(), [escalas, escalasSemanais, auxiliares, turnos, year, month, loading])
 
   // Detecta alertas resolvidos → mostra banner "✅ N resolvido(s)"
   useEffect(() => {
@@ -205,15 +224,19 @@ export default function EscalaMensal() {
     setLoading(true)
     const startDate = format(startOfMonth(currentDate), "yyyy-MM-dd")
     const endDate   = format(new Date(year, month, daysInMonth), "yyyy-MM-dd")
-    const [{ data: a },{ data: t },{ data: e }] = await Promise.all([
+    const [{ data: a },{ data: t },{ data: e },{ data: s }] = await Promise.all([
       supabase.from("auxiliares").select("*"),
       supabase.from("turnos").select("*").order("nome"),
       supabase.from("escalas").select("id,data,auxiliar_id,turno_id,codigo_especial")
         .eq("tipo_escala","mensal").gte("data",startDate).lte("data",endDate),
+      supabase.from("escalas").select("id,data,auxiliar_id,turno_letra,posto")
+        .eq("tipo_escala","semanal").gte("data",startDate).lte("data",endDate)
+        .not("auxiliar_id","is",null).not("turno_letra","is",null),
     ])
     setAuxiliares(a ?? [])
     setTurnos(t ?? [])
     setEscalas(e ?? [])
+    setEscalasSemanais(s ?? [])
     setLoading(false)
   }
   useEffect(() => { fetchAll() }, [year, month])
@@ -225,7 +248,7 @@ export default function EscalaMensal() {
       .on('postgres_changes', { event:'*', schema:'public', table:'escalas' },
         (payload) => {
           const row = (payload.new ?? payload.old) as { data?: string; tipo_escala?: string } | undefined
-          if (row?.tipo_escala === 'mensal' && row?.data) {
+          if ((row?.tipo_escala === 'mensal' || row?.tipo_escala === 'semanal') && row?.data) {
             const d = new Date(row.data + 'T12:00:00')
             if (d.getFullYear() === year && d.getMonth() === month) fetchAll()
           }
@@ -237,10 +260,43 @@ export default function EscalaMensal() {
   // ── Helpers ───────────────────────────────────────────────────────────────
   function mkDateStr(day: number) { return `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}` }
   function getEscala(auxId: string, day: number) { return escalas.find(e => e.auxiliar_id===auxId && e.data===mkDateStr(day)) }
-  function getCellDisplay(e: EscalaRow | undefined) {
-    if (!e) return null
-    if (e.codigo_especial) return { code: e.codigo_especial, ...getSpecialColor(e.codigo_especial) }
-    if (e.turno_id) { const t = turnos.find(t=>t.id===e.turno_id); if (t) return { code: t.nome, ...getTurnoColor(t) } }
+  // Devolve o 1.º registo semanal para este aux+dia (quando não há registo mensal)
+  function getSemanaisForAux(auxId: string, day: number) {
+    return escalasSemanais.filter(s => s.auxiliar_id === auxId && s.data === mkDateStr(day))
+  }
+  const LETRA_COLOR: Record<string, { bg: string; text: string }> = {
+    N: { bg: "#C7D2FE", text: "#3730A3" },
+    M: { bg: "#FEF08A", text: "#713F12" },
+    T: { bg: "#FECDD3", text: "#881337" },
+  }
+  // Dado turno_letra e posto (da escala semanal), tenta encontrar o turno registado correspondente
+  function resolverTurnoDeSemanal(letra: string, posto: string) {
+    // 1.º: match exacto por letra + posto
+    let t = turnos.find(t => getTurnoLetraMensal(t) === letra && (t.postos ?? []).includes(posto))
+    if (t) return t
+    // 2.º: qualquer turno cujo nome começa pela letra (N5, M1, T2, etc.)
+    t = turnos.find(t => t.nome.toUpperCase().startsWith(letra.toUpperCase()))
+    if (t) return t
+    // 3.º: qualquer turno com a letra correta (fallback final)
+    return turnos.find(t => getTurnoLetraMensal(t) === letra) ?? null
+  }
+
+  function getCellDisplay(e: EscalaRow | undefined, auxId?: string, day?: number) {
+    if (!e) {
+      // Derivar do semanal quando não há registo mensal
+      if (auxId && day !== undefined) {
+        const sems = getSemanaisForAux(auxId, day)
+        if (sems.length > 0) {
+          const letra = sems[0].turno_letra
+          const t = resolverTurnoDeSemanal(letra, sems[0].posto)
+          if (t) return { code: t.nome, ...getTurnoColor(t), isSemanal: true }
+          return { code: letra, ...(LETRA_COLOR[letra] ?? { bg: "#F3F4F6", text: "#374151" }), isSemanal: true }
+        }
+      }
+      return null
+    }
+    if (e.codigo_especial) return { code: e.codigo_especial, ...getSpecialColor(e.codigo_especial), isSemanal: false }
+    if (e.turno_id) { const t = turnos.find(t=>t.id===e.turno_id); if (t) return { code: t.nome, ...getTurnoColor(t), isSemanal: false } }
     return null
   }
   function flashCell(auxId: string, data: string) {
@@ -264,27 +320,105 @@ export default function EscalaMensal() {
   function selectTurno(id: string) { setSelTurnoId(id); setSelCodigo(null) }
   function selectCodigo(code: string) { setSelCodigo(code); setSelTurnoId(null) }
 
+  // Função para abrir modal de substituição
+  function handleAlertAction(auxId: string, dia: number) {
+    const dataStr = mkDateStr(dia)
+    setSubstitutoAuxId(auxId)
+    setSubstitutoData(dataStr)
+    setSubstitutoModalOpen(true)
+  }
+
+  // Buscar auxiliares disponíveis para substituição num dia específico
+  function getAuxiliaresDisponiveisParaSubstituir(data: string, excludeAuxId: string) {
+    const aux_com_info = auxiliares
+      .filter(a => a.id !== excludeAuxId && a.disponivel !== false)
+      .map(a => {
+        // Contar horas atribuídas ao auxiliar
+        const auxEscalas = escalas.filter(e => e.auxiliar_id === a.id && e.turno_id)
+        let totalHoras = 0
+        for (const e of auxEscalas) {
+          const t = turnos.find(t => t.id === e.turno_id)
+          if (t) totalHoras += calcShiftHours(t)
+        }
+        totalHoras = Math.round(totalHoras * 10) / 10
+
+        // Verificar se já tem atribuição no dia
+        const jaTemNodia = escalas.some(e => e.auxiliar_id === a.id && e.data === data && e.turno_id)
+
+        return {
+          id: a.id,
+          nome: a.nome,
+          numero_mecanografico: a.numero_mecanografico ?? "",
+          totalHoras,
+          turnos_mes: auxEscalas.length,
+          jaTemNodia,
+          disponivel: !jaTemNodia && totalHoras < 160,
+        }
+      })
+      .sort((a, b) => {
+        // Priorizar: disponíveis sem atribuição no dia, com menos horas
+        if (a.jaTemNodia === b.jaTemNodia) return a.totalHoras - b.totalHoras
+        return a.jaTemNodia ? 1 : -1
+      })
+
+    return aux_com_info
+  }
+
+  function navegarParaSemanal(aux: Auxiliar) {
+    // Encontra o primeiro dia com atribuição deste auxiliar no mês
+    const auxEscalas = escalas.filter(e => e.auxiliar_id === aux.id && e.turno_id)
+    const firstDay = auxEscalas.length > 0
+      ? auxEscalas.map(e => e.data).sort()[0]
+      : mkDateStr(1)
+    const weekDate = startOfWeek(parseISO(firstDay), { weekStartsOn: 1 })
+    const weekStr = format(weekDate, "yyyy-MM-dd")
+    navigate(`/escala-semanal?auxiliarId=${aux.id}&auxiliarNome=${encodeURIComponent(aux.nome)}&week=${weekStr}`)
+  }
+
   async function saveEscala() {
     if (!selCell || (!selTurnoId && !selCodigo)) return
     setSaving(true)
     const ex = escalas.find(e => e.auxiliar_id===selCell.auxiliarId && e.data===selCell.data)
-    const payload = { auxiliar_id:selCell.auxiliarId, data:selCell.data, tipo_escala:"mensal", status:"alocado", turno_id:selTurnoId??null, codigo_especial:selCodigo??null }
+    const updatePayload = { turno_id:selTurnoId??null, codigo_especial:selCodigo??null }
+    const insertPayload = { auxiliar_id:selCell.auxiliarId, data:selCell.data, tipo_escala:"mensal", status:"alocado", ...updatePayload }
     let savedId: string|null = null
-    if (ex) { const {error} = await supabase.from("escalas").update(payload).eq("id",ex.id); if (!error) savedId=ex.id }
-    else { const {data:rows,error} = await supabase.from("escalas").insert(payload).select("id"); if (!error&&rows?.length) savedId=rows[0].id }
+    if (ex) { const {error} = await supabase.from("escalas").update(updatePayload).eq("id",ex.id); if (!error) savedId=ex.id }
+    else { const {data:rows,error} = await supabase.from("escalas").insert(insertPayload).select("id"); if (!error&&rows?.length) savedId=rows[0].id }
+    // Capturar dados para toast ANTES de fechar o diálogo
+    const auxNome = auxiliares.find(a => a.id === selCell.auxiliarId)?.nome ?? "Auxiliar"
+    const turnoNome = selTurnoId ? (turnos.find(t => t.id === selTurnoId)?.nome ?? "") : ""
+    const codigoNome = selCodigo ? (SPECIAL.find(s => s.code === selCodigo)?.label ?? selCodigo) : ""
+    const dataFormatada = format(parseISO(selCell.data), "d/M", { locale: ptBR })
     setSaving(false); closeDialog()
     if (savedId) {
       const nr: EscalaRow = { id:savedId, data:selCell.data, auxiliar_id:selCell.auxiliarId, turno_id:selTurnoId, codigo_especial:selCodigo }
       setEscalas(p => ex ? p.map(e=>e.id===ex.id?nr:e) : [...p,nr])
       flashCell(selCell.auxiliarId, selCell.data)
+      // Toast de sucesso com nome real
+      const descricao = turnoNome || codigoNome
+      showToastMsg(`✅ ${auxNome} — ${descricao} atribuído em ${dataFormatada}`)
     } else fetchAll()
   }
 
   async function clearEscala() {
     if (!selCell) return
     const ex = escalas.find(e => e.auxiliar_id===selCell.auxiliarId && e.data===selCell.data)
+    const auxNome = auxiliares.find(a => a.id === selCell.auxiliarId)?.nome ?? "Auxiliar"
+    const dataFormatada = format(parseISO(selCell.data), "d/M", { locale: ptBR })
     closeDialog()
-    if (ex) { setEscalas(p=>p.filter(e=>e.id!==ex.id)); const {error}=await supabase.from("escalas").delete().eq("id",ex.id); if (error) fetchAll() }
+    if (ex) {
+      setEscalas(p=>p.filter(e=>e.id!==ex.id))
+      const {error}=await supabase.from("escalas").delete().eq("id",ex.id)
+      if (error) fetchAll()
+      else showToastMsg(`Atribuição removida — ${auxNome}, dia ${dataFormatada}`)
+    }
+  }
+
+  // Helper para mostrar toast
+  function showToastMsg(msg: string) {
+    setToastMsg(msg)
+    setShowToast(true)
+    setTimeout(() => setShowToast(false), 3500)
   }
 
   // ── Alertas / Validações ──────────────────────────────────────────────────
@@ -303,6 +437,7 @@ export default function EscalaMensal() {
     categoria: "ausencia" | "cobertura" | "descanso" | "excesso"
     mensagem: string
     detalhe?: string
+    acao?: { label: string; auxId: string; dia: number }
   }
 
   function calcularAlertas(): AlertaMensal[] {
@@ -324,68 +459,102 @@ export default function EscalaMensal() {
       const label = `${d}/${month+1} (${DIAS_PT[dow]})`
       const dayAll      = escalas.filter(e => e.data === ds)
       const dayWithTurno = dayAll.filter(e => e.turno_id)
+      // Registos semanal deste dia (para complementar verificações)
+      const daySemanal   = escalasSemanais.filter(s => s.data === ds)
 
       // ── A) Ausências por código especial ─────────────────────────────────
       for (const e of dayAll) {
         if (!e.codigo_especial || !ABSENCE_TIPOS.includes(e.codigo_especial)) continue
         const aux    = auxMap.get(e.auxiliar_id ?? "")
         const motivo = ABSENCE_LABEL[e.codigo_especial] ?? e.codigo_especial
+        const isBaixa = e.codigo_especial === "L" || e.codigo_especial === "Aci"
         alertas.push({
           id: `info_ausencia_${d}_${e.auxiliar_id}_${e.codigo_especial}`,
-          tipo:"info", categoria:"ausencia",
+          tipo: isBaixa ? "aviso" : "info", categoria:"ausencia",
           mensagem:`${aux?.nome ?? "Auxiliar"} — ${motivo} no dia ${label}`,
+          detalhe: isBaixa ? "É necessário garantir cobertura para este posto" : undefined,
+          acao: isBaixa && aux ? { label: "Alocar substituto", auxId: aux.id, dia: d } : undefined,
         })
       }
 
-      // ── B) Cobertura Turno N (necessário 2: RX URG + TAC 2) ──────────────
-      const nWorkers = dayWithTurno.filter(e => {
-        const t = turnos.find(t => t.id === e.turno_id)
-        return t && isNoturnoTurno(t)
-      })
-      if (dayWithTurno.length > 0) {
-        const nNames = nWorkers.map(e => auxMap.get(e.auxiliar_id ?? "")?.nome ?? "?").join(" e ")
-        if (nWorkers.length === 0) {
+      // ── B) Cobertura específica por Posto + Turno ──────────────────────────
+      const hasAnyActivity = dayWithTurno.length > 0 || daySemanal.length > 0
+
+      if (hasAnyActivity) {
+        // Verificar cobertura Turno N (necessário 2: RX_URG + TAC 2)
+        const nWorkersMensal = dayWithTurno.filter(e => {
+          const t = turnos.find(t => t.id === e.turno_id)
+          return t && isNoturnoTurno(t)
+        })
+        const nWorkersSemanal = daySemanal.filter(s => s.turno_letra === "N" &&
+          (s.posto === "TAC2" || s.posto === "RX_URG" || s.posto === "TAC1"))
+        const nWorkers = [
+          ...nWorkersMensal.map(e => ({ auxId: e.auxiliar_id ?? "", fonte: "mensal" })),
+          ...nWorkersSemanal.map(s => ({ auxId: s.auxiliar_id ?? "", fonte: "semanal" })),
+        ]
+        const nWorkersUniq = nWorkers.filter((w,i) => nWorkers.findIndex(x=>x.auxId===w.auxId)===i)
+        if (nWorkersUniq.length === 0) {
           alertas.push({
             id:`erro_cobertura_N0_${d}`, tipo:"erro", categoria:"cobertura",
-            mensagem:`${label} — Turno N sem nenhum auxiliar atribuído`,
-            detalhe:"RX URG e TAC 2 necessitam de 2 auxiliares no turno N",
+            mensagem:`${label} — RX URG + TAC 2 — Turno N sem auxiliar atribuído`,
+            detalhe:"Necessário mínimo 2 auxiliares no Turno N",
           })
-        } else if (nWorkers.length === 1) {
+        } else if (nWorkersUniq.length === 1) {
+          const auxName = auxMap.get(nWorkersUniq[0].auxId)?.nome ?? "?"
           alertas.push({
             id:`erro_cobertura_N1_${d}`, tipo:"erro", categoria:"cobertura",
-            mensagem:`${label} — Turno N: apenas ${nNames} (falta 1 auxiliar)`,
-            detalhe:"RX URG + TAC 2 necessitam de 2 auxiliares",
+            mensagem:`${label} — RX URG + TAC 2 — Turno N: apenas ${auxName}`,
+            detalhe:"Falta 1 auxiliar para cobertura completa (necessário 2)",
           })
-        } else if (nWorkers.length > 2) {
+        } else if (nWorkersUniq.length > 2) {
+          const nNames = nWorkersUniq.map(w => auxMap.get(w.auxId)?.nome ?? "?").join(", ")
           alertas.push({
             id:`aviso_cobertura_Nexcess_${d}`, tipo:"aviso", categoria:"cobertura",
-            mensagem:`${label} — ${nWorkers.length} auxiliares no Turno N: ${nNames} (esperado 2)`,
+            mensagem:`${label} — Turno N com ${nWorkersUniq.length} auxiliares: ${nNames}`,
+            detalhe:"Esperado máximo 2 auxiliares (RX URG + TAC 2)",
           })
         }
-      }
 
-      // ── C) Exames Complementares — cobertura M e T (seg–sáb) ─────────────
-      if (!isSun && dayWithTurno.length > 0) {
-        const hasExam1M = dayWithTurno.some(e => {
-          const t = turnos.find(t => t.id === e.turno_id)
-          return t && getTurnoLetraMensal(t) === "M" && (t.postos ?? []).includes("EXAM1")
-        })
-        if (!hasExam1M)
-          alertas.push({
-            id:`erro_cobertura_exam1M_${d}`, tipo:"erro", categoria:"cobertura",
-            mensagem:`${label} — Exames Complementares sem auxiliar no Turno M`,
-            detalhe:"Posto EXAM1 precisa de cobertura na manhã",
-          })
+        // Verificar cobertura RX_URG e TAC2 para Turno M e T
+        const POSTOS_M_T = ["RX_URG", "TAC2", "TAC1"]
+        for (const posto of POSTOS_M_T) {
+          for (const turnoLetra of ["M", "T"] as const) {
+            const hasCoverage = dayWithTurno.some(e => {
+              const t = turnos.find(t => t.id === e.turno_id)
+              return t && getTurnoLetraMensal(t) === turnoLetra && (t.postos ?? []).includes(posto)
+            }) || daySemanal.some(s => s.turno_letra === turnoLetra && s.posto === posto)
 
-        const hasExam1T = dayWithTurno.some(e => {
-          const t = turnos.find(t => t.id === e.turno_id)
-          return t && getTurnoLetraMensal(t) === "T" && (t.postos ?? []).includes("EXAM1")
-        })
-        if (!hasExam1T)
-          alertas.push({
-            id:`aviso_cobertura_exam1T_${d}`, tipo:"aviso", categoria:"cobertura",
-            mensagem:`${label} — Exames Complementares sem auxiliar no Turno T`,
-          })
+            if (!hasCoverage) {
+              const tipoAlerta = (posto === "TAC1" && turnoLetra === "T") ? "aviso" : "erro"
+              const nomePostoUI = posto === "RX_URG" ? "RX URG" : posto === "TAC1" ? "TAC 1" : "TAC 2"
+              alertas.push({
+                id:`erro_cobertura_${posto}_${turnoLetra}_${d}`, tipo:tipoAlerta, categoria:"cobertura",
+                mensagem:`${label} — ${nomePostoUI} sem auxiliar no Turno ${turnoLetra}`,
+                detalhe:`Posto ${nomePostoUI} precisa de cobertura no Turno ${turnoLetra}`,
+              })
+            }
+          }
+        }
+
+        // Verificar cobertura Eco URG (EXAM1/EXAM2) para Turno M e T (seg–sáb)
+        if (!isSun) {
+          for (const turnoLetra of ["M", "T"] as const) {
+            const hasExamCoverage = dayWithTurno.some(e => {
+              const t = turnos.find(t => t.id === e.turno_id)
+              return t && getTurnoLetraMensal(t) === turnoLetra && (t.postos ?? []).includes("EXAM1")
+            }) || daySemanal.some(s => s.turno_letra === turnoLetra && (s.posto === "EXAM1" || s.posto === "EXAM2"))
+
+            if (!hasExamCoverage) {
+              const tipoAlerta = turnoLetra === "M" ? "erro" : "aviso"
+              const detalheMsg = turnoLetra === "M" ? "na manhã" : "na tarde"
+              alertas.push({
+                id:`erro_cobertura_exam1${turnoLetra}_${d}`, tipo:tipoAlerta, categoria:"cobertura",
+                mensagem:`${label} — Eco URG sem auxiliar no Turno ${turnoLetra}`,
+                detalhe:`Posto EXAM1 precisa de cobertura ${detalheMsg}`,
+              })
+            }
+          }
+        }
       }
 
       // ── D) Auxiliar escalado ao fim-de-semana sem trabalha_fds ───────────
@@ -440,6 +609,39 @@ export default function EscalaMensal() {
         alertas.push({
           id:`aviso_excesso_total_${aux.id}`, tipo:"aviso", categoria:"excesso",
           mensagem:`${aux.nome} — ${total} turnos este mês (limite: ${cfg.maxTurnosMes})`,
+        })
+
+      // ── F.2) Horas mensais em excesso / défice ──────────────────────────
+      const auxEscalas = escalas.filter(e => e.auxiliar_id === aux.id && e.turno_id)
+      let totalHoras = 0
+      for (const e of auxEscalas) {
+        const t = turnos.find(t => t.id === e.turno_id)
+        if (t) totalHoras += calcShiftHours(t)
+      }
+      totalHoras = Math.round(totalHoras * 10) / 10 // arredondar a 1 casa decimal
+      if (totalHoras > 160)
+        alertas.push({
+          id:`aviso_horas_excesso_${aux.id}`, tipo:"aviso", categoria:"excesso",
+          mensagem:`${aux.nome} — ${totalHoras}h atribuídas este mês (máximo recomendado: 160h)`,
+          detalhe:`${auxEscalas.length} turnos totalizando ${totalHoras} horas`,
+        })
+      if (auxEscalas.length > 0 && totalHoras < 80)
+        alertas.push({
+          id:`info_horas_deficit_${aux.id}`, tipo:"info", categoria:"excesso",
+          mensagem:`${aux.nome} — apenas ${totalHoras}h atribuídas este mês (mínimo esperado: 80h)`,
+        })
+    }
+
+    // ── G) Auxiliares sem turnos atribuídos ────────────────────────────────
+    for (const aux of auxiliares) {
+      if (aux.disponivel === false) continue
+      const temTurno = escalas.some(e => e.auxiliar_id === aux.id && e.turno_id)
+        || escalasSemanais.some(s => s.auxiliar_id === aux.id)
+      if (!temTurno)
+        alertas.push({
+          id:`info_sem_turnos_${aux.id}`, tipo:"info", categoria:"ausencia",
+          mensagem:`${aux.nome} não tem turnos atribuídos este mês`,
+          detalhe:"Verifique se este/a auxiliar deve ser escalado/a",
         })
     }
 
@@ -964,7 +1166,7 @@ export default function EscalaMensal() {
           document.body.removeChild(link)
           URL.revokeObjectURL(url)
           
-          setToastMsg("✅ Imagem baixada! Compartilhe manualmente no WhatsApp")
+          setToastMsg("✅ Imagem transferida! Partilhe manualmente no WhatsApp")
           setShowToast(true)
           setTimeout(() => setShowToast(false), 3000)
           setSharingWA(false)
@@ -1029,10 +1231,10 @@ export default function EscalaMensal() {
 
           <div className="w-px h-6 bg-gray-200 mx-1"/>
           <Button variant="outline" size="sm" onClick={printEscala} disabled={loading} className="gap-2"><Printer className="h-4 w-4"/> Imprimir</Button>
-          <Button variant="outline" size="sm" onClick={exportPDF} disabled={loading} className="gap-2"><FileDown className="h-4 w-4"/> Baixar PDF</Button>
+          <Button variant="outline" size="sm" onClick={exportPDF} disabled={loading} className="gap-2"><FileDown className="h-4 w-4"/> Transferir PDF</Button>
           <Button variant="outline" size="sm" onClick={shareWA} disabled={loading || sharingWA} className="gap-2 border-green-400 text-green-700 hover:bg-green-50">
             {sharingWA ? <Loader className="h-4 w-4 animate-spin"/> : <MessageCircle className="h-4 w-4"/>}
-            {sharingWA ? "Enviando..." : "WhatsApp"}
+            {sharingWA ? "A enviar..." : "WhatsApp"}
           </Button>
         </div>
       </div>
@@ -1060,16 +1262,19 @@ export default function EscalaMensal() {
                   <tr key={aux.id}>
                     <td style={tdS("#EBEBEB",{position:"sticky",left:0,zIndex:10,fontWeight:700,fontSize:10,background:"#EBEBEB"})}>{aux.numero_mecanografico??""}</td>
                     <td style={tdS("#EBEBEB",{position:"sticky",left:44,zIndex:10,whiteSpace:"nowrap",fontWeight:600,fontSize:10,textAlign:"left",paddingLeft:8,background:"#EBEBEB"})}>
-                      <button onClick={()=>setDrawerAux(aux)} style={{background:"none",border:"none",cursor:"pointer",fontWeight:600,fontSize:10,color:"#111827",padding:0,textAlign:"left"}} onMouseEnter={e=>(e.currentTarget.style.color="#2563EB")} onMouseLeave={e=>(e.currentTarget.style.color="#111827")}>{aux.nome}</button>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <button onClick={()=>setDrawerAux(aux)} style={{background:"none",border:"none",cursor:"pointer",fontWeight:600,fontSize:10,color:"#111827",padding:0,textAlign:"left"}} onMouseEnter={e=>(e.currentTarget.style.color="#2563EB")} onMouseLeave={e=>(e.currentTarget.style.color="#111827")}>{aux.nome}</button>
+                        <button onClick={e=>{e.stopPropagation();navegarParaSemanal(aux)}} title="Ver na escala semanal" style={{background:"none",border:"none",cursor:"pointer",padding:"1px 2px",display:"flex",alignItems:"center",opacity:0.45,flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.opacity="1"}} onMouseLeave={e=>{e.currentTarget.style.opacity="0.45"}}><CalendarDays size={11} color="#2563EB"/></button>
+                      </div>
                     </td>
                     {days.map(d=>{
-                      const e=getEscala(aux.id,d); const di=getCellDisplay(e)
+                      const e=getEscala(aux.id,d); const di=getCellDisplay(e, aux.id, d)
                       const we=isWeekend(year,month,d)
                       const bg=di?di.bg:we?"#E5E7EB":rowBg
                       const fl=flashCells.has(`${aux.id}_${mkDateStr(d)}`)
                       return(
-                        <td key={d} onClick={()=>openCell(aux.id,d)} title={di?.code??""}
-                          style={{ border:"1px solid #CCC",padding:"2px 0",textAlign:"center",cursor:"pointer",background:bg,color:di?di.text:"#374151",fontWeight:di?700:400,fontSize:10,minWidth:30,userSelect:"none",transition:"filter 0.1s",animation:fl?"cellFlash 0.8s ease":"none" }}
+                        <td key={d} onClick={()=>openCell(aux.id,d)} title={di?.code??(di?.isSemanal?"(da escala semanal)":"") }
+                          style={{ border:`1px solid ${di?.isSemanal?"#6366F1":"#CCC"}`,padding:"2px 0",textAlign:"center",cursor:"pointer",background:bg,color:di?di.text:"#374151",fontWeight:di?700:400,fontSize:10,minWidth:30,userSelect:"none",transition:"filter 0.1s",animation:fl?"cellFlash 0.8s ease":"none",fontStyle:di?.isSemanal?"italic":"normal",opacity:di?.isSemanal?0.8:1 }}
                           onMouseEnter={ev=>(ev.currentTarget.style.filter="brightness(0.88)")}
                           onMouseLeave={ev=>(ev.currentTarget.style.filter="brightness(1)")}>
                           {di?.code??""}
@@ -1079,7 +1284,7 @@ export default function EscalaMensal() {
                   </tr>
                 )
               })}
-              {sortedAuxiliares.length===0&&<tr><td colSpan={days.length+2} style={{textAlign:"center",padding:32,color:"#9CA3AF",fontSize:13}}>Nenhum auxiliar cadastrado.</td></tr>}
+              {sortedAuxiliares.length===0&&<tr><td colSpan={days.length+2} style={{textAlign:"center",padding:32,color:"#9CA3AF",fontSize:13}}>Nenhum auxiliar registado.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1162,9 +1367,24 @@ export default function EscalaMensal() {
                     {isOpen && (
                       <div style={{ padding:"6px 8px 6px",maxHeight:220,overflowY:"auto" }}>
                         {items.map(a => (
-                          <div key={a.id} style={ROW_STYLE(a.tipo)}>
-                            <span style={{ fontWeight:600 }}>{a.mensagem}</span>
-                            {a.detalhe && <span style={{ opacity:0.75,fontSize:11 }}>↳ {a.detalhe}</span>}
+                          <div key={a.id} style={{...ROW_STYLE(a.tipo), flexDirection:"row" as const, alignItems:"center", justifyContent:"space-between", flexWrap:"wrap" as const}}>
+                            <div style={{flex:1,minWidth:0}}>
+                              <span style={{ fontWeight:600 }}>{a.mensagem}</span>
+                              {a.detalhe && <div style={{ opacity:0.75,fontSize:11 }}>↳ {a.detalhe}</div>}
+                            </div>
+                            {a.acao && (
+                              <button
+                                onClick={() => handleAlertAction(a.acao!.auxId, a.acao!.dia)}
+                                style={{
+                                  background:"#4F46E5",color:"#fff",border:"none",borderRadius:6,
+                                  padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",
+                                  whiteSpace:"nowrap",marginLeft:8,flexShrink:0,
+                                  boxShadow:"0 1px 4px rgba(79,70,229,0.3)",
+                                }}
+                              >
+                                {a.acao.label}
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1195,6 +1415,22 @@ export default function EscalaMensal() {
               <button onClick={closeDialog} style={{background:"#F4F4F5",border:"none",cursor:"pointer",padding:"6px",borderRadius:8,color:"#71717A",lineHeight:0}}><X size={16}/></button>
             </div>
             {(()=>{const di=getCellDisplay(existingInCell);if(!di)return null;return<div style={{marginTop:10,display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:11,color:"#9CA3AF"}}>Atual:</span><span style={{background:di.bg,color:di.text,fontWeight:700,fontSize:12,padding:"2px 10px",borderRadius:6}}>{di.code}</span></div>})()}
+            {/* Banner de baixa/ausência */}
+            {(()=>{
+              if (!existingInCell?.codigo_especial) return null
+              const BAIXA_CODES = ["L","Aci"]
+              if (!BAIXA_CODES.includes(existingInCell.codigo_especial)) return null
+              const motivo = existingInCell.codigo_especial === "L" ? "baixa médica / licença" : "acidente de trabalho"
+              return(
+                <div style={{marginTop:10,padding:"8px 12px",background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,fontSize:12,color:"#92400E",display:"flex",gap:6,alignItems:"flex-start"}}>
+                  <span style={{fontSize:14,lineHeight:1}}>⚠️</span>
+                  <div>
+                    <div style={{fontWeight:600}}>{selectedAux?.nome} encontra-se de {motivo} neste dia.</div>
+                    <div style={{fontSize:11,opacity:0.8,marginTop:2}}>Considere alocar um substituto para garantir cobertura.</div>
+                  </div>
+                </div>
+              )
+            })()}
           </div>
           {/* body */}
           <div style={{overflowY:"auto",padding:"16px 22px",flex:1}}>
@@ -1221,13 +1457,13 @@ export default function EscalaMensal() {
                 onFocus={ev=>(ev.target.style.borderColor="#6366F1")} onBlur={ev=>(ev.target.style.borderColor="#E5E7EB")}/>
             </div>
             {filteredTurnos.length===0
-              ? <p style={{textAlign:"center",color:"#9CA3AF",fontSize:12,padding:"14px 0"}}>{turnos.length===0?"Nenhum turno cadastrado.":"Sem resultados."}</p>
+              ? <p style={{textAlign:"center",color:"#9CA3AF",fontSize:12,padding:"14px 0"}}>{turnos.length===0?"Nenhum turno registado.":"Sem resultados."}</p>
               : <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:7}}>
                   {filteredTurnos.map(t=>{const {bg,text}=getTurnoColor(t);const sel=selTurnoId===t.id;return(
                     <button key={t.id} onClick={()=>selectTurno(t.id)} style={{background:sel?bg:"#FAFAFA",color:sel?text:"#374151",border:`2px solid ${sel?text+"60":"#E5E7EB"}`,borderRadius:10,padding:"10px 12px",cursor:"pointer",fontSize:11,fontWeight:sel?700:500,textAlign:"left",display:"flex",alignItems:"center",justifyContent:"space-between",transition:"all 0.12s",outline:"none",boxShadow:sel?`0 0 0 2px ${bg}`:"none"}}>
                       <div>
                         <div style={{fontSize:15,fontWeight:800,lineHeight:1}}>{t.nome}</div>
-                        <div style={{fontSize:10,opacity:0.65,marginTop:3}}>{t.horario_inicio.slice(0,5)} – {t.horario_fim.slice(0,5)}</div>
+                        <div style={{fontSize:10,opacity:0.65,marginTop:3}}>{(t.horario_inicio||"--").slice(0,5)} – {(t.horario_fim||"--").slice(0,5)}</div>
                       </div>
                       {sel&&<Check size={15}/>}
                     </button>
@@ -1246,6 +1482,93 @@ export default function EscalaMensal() {
           </div>
         </div>
       </>}
+
+      {/* Modal de Substituição */}
+      {substitutoModalOpen && substitutoAuxId && substitutoData && (() => {
+        const auxIndisponivel = auxiliares.find(a => a.id === substitutoAuxId)
+        const disponíveis = getAuxiliaresDisponiveisParaSubstituir(substitutoData, substitutoAuxId)
+        const dayNum = parseInt(substitutoData.split("-")[2])
+        const label = `${dayNum}/${month+1} (${DIAS_PT[getDay(new Date(year, month, dayNum))]})`
+
+        return (
+          <>
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:60,backdropFilter:"blur(3px)",animation:"mFadeIn 0.15s ease"}} onClick={()=>setSubstitutoModalOpen(false)}/>
+            <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#fff",borderRadius:18,zIndex:61,width:480,maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 32px 80px rgba(0,0,0,0.28),0 0 0 1px rgba(0,0,0,0.06)",animation:"mSlideUp 0.2s cubic-bezier(0.34,1.56,0.64,1)"}}>
+              {/* header */}
+              <div style={{padding:"18px 22px 14px",borderBottom:"1px solid #F0F0F0"}}>
+                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between"}}>
+                  <div>
+                    <div style={{fontWeight:800,fontSize:15,color:"#111"}}>Alocar Substituto</div>
+                    <div style={{fontSize:12,color:"#9CA3AF",marginTop:3,fontWeight:500}}>{auxIndisponivel?.nome} — {label}</div>
+                  </div>
+                  <button onClick={()=>setSubstitutoModalOpen(false)} style={{background:"#F4F4F5",border:"none",cursor:"pointer",padding:"6px",borderRadius:8,color:"#71717A",lineHeight:0}}><X size={16}/></button>
+                </div>
+              </div>
+              {/* body */}
+              <div style={{overflowY:"auto",padding:"16px 22px",flex:1}}>
+                {disponíveis.length === 0 ? (
+                  <div style={{textAlign:"center",color:"#9CA3AF",fontSize:12,padding:"20px 0"}}>
+                    Nenhum auxiliar disponível neste dia.
+                  </div>
+                ) : (
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {disponíveis.map(aux => (
+                      <button
+                        key={aux.id}
+                        onClick={async () => {
+                          // Alocar o auxiliar como substituto
+                          const payload = { auxiliar_id:aux.id, data:substitutoData, tipo_escala:"mensal", status:"alocado", turno_id:null, codigo_especial:null }
+                          const ex = escalas.find(e => e.auxiliar_id === aux.id && e.data === substitutoData)
+
+                          let savedId: string | null = null
+                          if (ex) {
+                            const {error} = await supabase.from("escalas").update(payload).eq("id", ex.id)
+                            if (!error) savedId = ex.id
+                          } else {
+                            const {data:rows, error} = await supabase.from("escalas").insert(payload).select("id")
+                            if (!error && rows?.length) savedId = rows[0].id
+                          }
+
+                          if (savedId) {
+                            setEscalas(p => ex ? p.map(e=>e.id===ex.id?{...payload,id:ex.id}:e) : [...p, {...payload, id:savedId}])
+                            flashCell(aux.id, substitutoData)
+                            showToastMsg(`✅ ${aux.nome} alocado/a como substituto em ${label}`)
+                            setSubstitutoModalOpen(false)
+                            setSubstitutoAuxId(null)
+                            setSubstitutoData(null)
+                          }
+                        }}
+                        style={{
+                          background:aux.jaTemNodia?"#F9FAFB":"#FFFFFF",
+                          border:`1.5px solid ${aux.jaTemNodia?"#E5E7EB":"#D1D5DB"}`,
+                          borderRadius:10,
+                          padding:"12px 14px",
+                          cursor:aux.jaTemNodia?"not-allowed":"pointer",
+                          fontSize:12,
+                          fontWeight:500,
+                          textAlign:"left",
+                          transition:"all 0.12s",
+                          opacity:aux.jaTemNodia?0.5:1,
+                          display:"flex",
+                          justifyContent:"space-between",
+                          alignItems:"center",
+                        }}
+                        disabled={aux.jaTemNodia}
+                      >
+                        <div>
+                          <div style={{fontWeight:600,fontSize:13,color:"#111"}}>{aux.nome}</div>
+                          <div style={{fontSize:10,color:"#9CA3AF",marginTop:2}}>Nº {aux.numero_mecanografico} • {aux.totalHoras}h este mês • {aux.turnos_mes} turnos</div>
+                        </div>
+                        {aux.jaTemNodia && <span style={{fontSize:9,color:"#9CA3AF"}}>Já tem atribuição</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )
+      })()}
 
       <style>{`
         @keyframes mFadeIn{from{opacity:0}to{opacity:1}}

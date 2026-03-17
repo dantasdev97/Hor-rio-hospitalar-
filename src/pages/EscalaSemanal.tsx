@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { format, startOfWeek, addDays, getDay, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { ChevronLeft, ChevronRight, Search, X, Check, FileDown, MessageCircle, Loader2, Trash2, RotateCcw, Printer, Loader, Info } from "lucide-react"
+import { ChevronLeft, ChevronRight, Search, X, Check, FileDown, MessageCircle, Loader2, Trash2, RotateCcw, Printer, Loader, Info, AlertCircle, MoreVertical } from "lucide-react"
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 import html2canvas from "html2canvas"
@@ -118,7 +119,14 @@ function ConfirmModal({ title, body, onConfirm, onCancel }: { title:string;body:
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function EscalaSemanal() {
-  const [referenceDate, setReferenceDate] = useState(() => new Date())
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [highlightAuxId,   setHighlightAuxId]   = useState<string | null>(null)
+  const [highlightAuxNome, setHighlightAuxNome] = useState<string | null>(null)
+  const [referenceDate, setReferenceDate] = useState(() => {
+    const week = searchParams.get("week")
+    if (week) { try { return parseISO(week) } catch { /* ignore */ } }
+    return new Date()
+  })
   const [auxiliares, setAuxiliares] = useState<Person[]>([])
   const [doutores,   setDoutores]   = useState<Person[]>([])
   const [escalas,    setEscalas]    = useState<EscalaRow[]>([])
@@ -133,6 +141,9 @@ export default function EscalaSemanal() {
   const [undoState,  setUndoState]  = useState<UndoState | null>(null)
   const [undoing,    setUndoing]    = useState(false)
   const [showClear,  setShowClear]  = useState(false)
+  const [alertasModalOpen, setAlertasModalOpen] = useState(false)
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const exportMenuRef = useRef<HTMLDivElement>(null)
 
   const [dialogOpen,  setDialogOpen]  = useState(false)
   const [selCell,     setSelCell]     = useState<{ data:string; turnoLetra:TurnoLetra; posto:PostoKey; tipo:PostoTipo }|null>(null)
@@ -187,6 +198,19 @@ export default function EscalaSemanal() {
   }
 
   useEffect(() => { fetchAll() }, [startDate])
+
+  // ── Ler params da URL (auxiliarId, auxiliarNome, week) ────────────────────
+  useEffect(() => {
+    const auxId   = searchParams.get("auxiliarId")
+    const auxNome = searchParams.get("auxiliarNome")
+    const week    = searchParams.get("week")
+    if (auxId)   { setHighlightAuxId(auxId); setHighlightAuxNome(auxNome) }
+    if (week) {
+      try { setReferenceDate(parseISO(week)) } catch { /* ignore */ }
+    }
+    // Limpar params da URL para não persistirem ao navegar
+    if (auxId || week) setSearchParams({}, { replace: true })
+  }, [])
 
   // ── Realtime: mensal → semanal ─────────────────────────────────────────────
   useEffect(() => {
@@ -391,6 +415,73 @@ export default function EscalaSemanal() {
     return getCellName(esc)
   }
 
+  // ── Calcular Alertas Semanal ──────────────────────────────────────────
+  interface AlertaSemanal {
+    id: string
+    tipo: "erro" | "aviso" | "info"
+    categoria: "cobertura" | "conflito" | "outro"
+    mensagem: string
+    detalhe?: string
+  }
+
+  function calcularAlertasSemanal(): AlertaSemanal[] {
+    const alertas: AlertaSemanal[] = []
+    const cfg = loadCfg()
+
+    for (const data of weekDays.map(d => format(d, "yyyy-MM-dd"))) {
+      const dayName = format(parseISO(data), "EEEE, d MMMM", { locale: ptBR })
+
+      // Verificar cobertura por Posto + Turno
+      for (const posto of POSTOS) {
+        for (const turnoLetra of ["M", "T", "N"] as const) {
+          if (!postoOpera(posto.key, turnoLetra, data)) continue
+
+          const tipo = getPostoTipo(posto.key, turnoLetra)
+          const isMulti = isMultiPerson(posto.key, turnoLetra)
+          const maxPersons = getMaxPersons(posto.key, turnoLetra)
+          const rows = getEscalas(data, turnoLetra, posto.key)
+          const personIds = tipo === "doutor"
+            ? rows.map(r => r.doutor_id).filter(Boolean)
+            : rows.map(r => r.auxiliar_id).filter(Boolean)
+          const uniquePersons = [...new Set(personIds)]
+
+          if (uniquePersons.length === 0) {
+            alertas.push({
+              id: `alerta_${data}_${posto.key}_${turnoLetra}_vazio`,
+              tipo: "erro",
+              categoria: "cobertura",
+              mensagem: `${dayName} — ${posto.label} sem cobertura no Turno ${turnoLetra}`,
+              detalhe: tipo === "doutor" ? "Precisa de um doutor" : `Precisa de ${maxPersons} ${maxPersons === 1 ? "auxiliar" : "auxiliares"}`,
+            })
+          } else if (!isMulti && uniquePersons.length > 1) {
+            alertas.push({
+              id: `alerta_${data}_${posto.key}_${turnoLetra}_multi`,
+              tipo: "aviso",
+              categoria: "conflito",
+              mensagem: `${dayName} — ${posto.label} Turno ${turnoLetra}: ${uniquePersons.length} pessoas (esperado 1)`,
+            })
+          } else if (isMulti && uniquePersons.length > maxPersons) {
+            alertas.push({
+              id: `alerta_${data}_${posto.key}_${turnoLetra}_excess`,
+              tipo: "aviso",
+              categoria: "conflito",
+              mensagem: `${dayName} — ${posto.label} Turno ${turnoLetra}: ${uniquePersons.length} pessoas (máximo ${maxPersons})`,
+            })
+          } else if (isMulti && uniquePersons.length < maxPersons) {
+            alertas.push({
+              id: `alerta_${data}_${posto.key}_${turnoLetra}_deficit`,
+              tipo: "info",
+              categoria: "cobertura",
+              mensagem: `${dayName} — ${posto.label} Turno ${turnoLetra}: apenas ${uniquePersons.length} de ${maxPersons} posições preenchidas`,
+            })
+          }
+        }
+      }
+    }
+
+    return alertas
+  }
+
   // ── Dialog ────────────────────────────────────────────────────────────────
   function openCell(data:string, turnoLetra:TurnoLetra, posto:PostoKey) {
     const tipo = getPostoTipo(posto, turnoLetra)
@@ -489,9 +580,10 @@ export default function EscalaSemanal() {
 
     // ── Reverse sync: semanal override → upsert registo mensal correspondente ──
     if (savedId && selCell.tipo === "auxiliar") {
+      // 1.º: match exacto por posto + letra; 2.º: fallback por letra (ex: N5 sem postos configurados)
       const matchedTurno = turnosData.find(t =>
         t.postos.includes(selCell.posto) && turnoToLetra(t) === selCell.turnoLetra
-      )
+      ) ?? turnosData.find(t => turnoToLetra(t) === selCell.turnoLetra)
       if (matchedTurno) {
         const exMensal = mensalEntries.find(
           m => m.auxiliar_id === selPersonId && m.data === selCell.data
@@ -1042,12 +1134,81 @@ export default function EscalaSemanal() {
           )}
 
           <div className="w-px h-6 bg-gray-200 mx-1"/>
-          <Button onClick={printEscala} disabled={loading} variant="outline" size="sm" className="gap-2"><Printer className="h-4 w-4"/> Imprimir</Button>
-          <Button onClick={exportPDF} disabled={loading} variant="outline" size="sm" className="gap-2"><FileDown className="h-4 w-4"/> Baixar PDF</Button>
-          <Button onClick={shareWA} disabled={loading || sharingWA} variant="outline" size="sm" className="gap-2 border-green-400 text-green-700 hover:bg-green-50">
-            {sharingWA ? <Loader className="h-4 w-4 animate-spin"/> : <MessageCircle className="h-4 w-4"/>}
-            {sharingWA ? "Enviando..." : "WhatsApp"}
+
+          {/* Alertas */}
+          <Button onClick={()=>setAlertasModalOpen(true)} disabled={loading} variant="outline" size="sm" className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50">
+            <AlertCircle className="h-4 w-4"/> Alertas
           </Button>
+
+          {/* Dropdown Export */}
+          <div className="relative" ref={exportMenuRef}>
+            <Button
+              onClick={()=>setExportMenuOpen(!exportMenuOpen)}
+              disabled={loading}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+            >
+              <MoreVertical className="h-4 w-4"/> Exportar
+            </Button>
+            {exportMenuOpen && (
+              <>
+                <div style={{position:"fixed",inset:0}} onClick={()=>setExportMenuOpen(false)}/>
+                <div style={{
+                  position:"absolute",
+                  top:"100%",
+                  right:0,
+                  marginTop:6,
+                  background:"#fff",
+                  border:"1px solid #E5E7EB",
+                  borderRadius:8,
+                  boxShadow:"0 10px 24px rgba(0,0,0,0.12)",
+                  zIndex:50,
+                  minWidth:180,
+                  overflow:"hidden",
+                }}>
+                  <button
+                    onClick={()=>{printEscala();setExportMenuOpen(false)}}
+                    style={{
+                      width:"100%",padding:"10px 14px",textAlign:"left",border:"none",background:"none",
+                      cursor:"pointer",fontSize:13,color:"#374151",display:"flex",alignItems:"center",gap:10,
+                      borderBottom:"1px solid #F3F4F6",transition:"background 0.2s",
+                    }}
+                    onMouseEnter={e=>(e.currentTarget.style.background="#F9FAFB")}
+                    onMouseLeave={e=>(e.currentTarget.style.background="none")}
+                  >
+                    <Printer size={16}/> Imprimir
+                  </button>
+                  <button
+                    onClick={()=>{exportPDF();setExportMenuOpen(false)}}
+                    style={{
+                      width:"100%",padding:"10px 14px",textAlign:"left",border:"none",background:"none",
+                      cursor:"pointer",fontSize:13,color:"#374151",display:"flex",alignItems:"center",gap:10,
+                      borderBottom:"1px solid #F3F4F6",transition:"background 0.2s",
+                    }}
+                    onMouseEnter={e=>(e.currentTarget.style.background="#F9FAFB")}
+                    onMouseLeave={e=>(e.currentTarget.style.background="none")}
+                  >
+                    <FileDown size={16}/> Baixar PDF
+                  </button>
+                  <button
+                    onClick={()=>{shareWA();setExportMenuOpen(false)}}
+                    disabled={sharingWA}
+                    style={{
+                      width:"100%",padding:"10px 14px",textAlign:"left",border:"none",background:"none",
+                      cursor:sharingWA?"not-allowed":"pointer",fontSize:13,color:sharingWA?"#D1D5DB":"#10B981",
+                      display:"flex",alignItems:"center",gap:10,transition:"background 0.2s",opacity:sharingWA?0.6:1,
+                    }}
+                    onMouseEnter={e=>!sharingWA&&(e.currentTarget.style.background="#F0FDF4")}
+                    onMouseLeave={e=>(e.currentTarget.style.background="none")}
+                  >
+                    {sharingWA ? <Loader size={16} className="animate-spin"/> : <MessageCircle size={16}/>}
+                    {sharingWA?"Enviando...":"WhatsApp"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1059,6 +1220,15 @@ export default function EscalaSemanal() {
           Configure em <strong>Turnos → Postos</strong>. Clique em qualquer célula para fazer override manual.
         </span>
       </div>
+
+      {/* Banner de filtro por auxiliar */}
+      {highlightAuxId && (
+        <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:10,padding:"8px 14px",background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:8,fontSize:13,color:"#1D4ED8" }}>
+          <span>👤</span>
+          <span>A mostrar turnos de <strong>{highlightAuxNome ?? "auxiliar"}</strong> — as células destacadas a azul correspondem às suas atribuições</span>
+          <button onClick={()=>{ setHighlightAuxId(null); setHighlightAuxNome(null) }} style={{ marginLeft:"auto",background:"none",border:"none",cursor:"pointer",color:"#6B7280",display:"flex",alignItems:"center" }} title="Limpar filtro"><X size={15}/></button>
+        </div>
+      )}
 
       {/* Table */}
       {loading ? <div className="text-center text-gray-400 py-16 text-sm">A carregar...</div> : (
@@ -1116,6 +1286,11 @@ export default function EscalaSemanal() {
                         : false
                       const isEmpty = opera && !cellName
                       const placeholder = isDocCell && isEmpty ? "Dr. ?" : ""
+                      // Highlight se este posto tem o auxiliar filtrado (single ou multi)
+                      const isHighlighted = highlightAuxId && (
+                        esc?.auxiliar_id === highlightAuxId ||
+                        (isDouble && getEscalas(dateStr, turno, p.key as PostoKey).some(r => r.auxiliar_id === highlightAuxId))
+                      )
                       return(
                         <td key={p.key}
                           onClick={opera ? ()=>openCell(dateStr,turno,p.key as PostoKey) : undefined}
@@ -1125,12 +1300,13 @@ export default function EscalaSemanal() {
                               ? `${cellName}${derived?" (da escala mensal)":""}${temRestr?" ⚠️ restrição ativa":""}`
                               : isDocCell ? "Clique para atribuir Doutor" : "Clique para atribuir"}
                           style={{ ...cellBase,
-                            backgroundColor: !opera ? "#E5E7EB" : p.bg,
+                            backgroundColor: isHighlighted ? "#DBEAFE" : !opera ? "#E5E7EB" : p.bg,
                             opacity: !opera ? 0.5 : derived ? 0.75 : 1,
                             fontStyle: (derived || placeholder) ? "italic" : "normal",
                             color: placeholder ? "#9CA3AF" : "inherit",
                             cursor: !opera ? "not-allowed" : "pointer",
-                            border: temRestr ? "2px solid #EF4444" : B }}
+                            border: temRestr ? "2px solid #EF4444" : isHighlighted ? "2px solid #3B82F6" : B,
+                            boxShadow: isHighlighted ? "inset 0 0 0 1px #93C5FD" : undefined }}
                           onMouseEnter={opera ? e=>(e.currentTarget.style.filter="brightness(0.91)") : undefined}
                           onMouseLeave={opera ? e=>(e.currentTarget.style.filter="brightness(1)") : undefined}>
                           {opera ? (cellName || placeholder || "") : "—"}
@@ -1335,10 +1511,103 @@ export default function EscalaSemanal() {
         </div>
       )}
 
+      {/* Modal de Alertas — desliza da direita para esquerda */}
+      {alertasModalOpen && (() => {
+        const alertas = calcularAlertasSemanal()
+        const erros = alertas.filter(a => a.tipo === "erro")
+        const avisos = alertas.filter(a => a.tipo === "aviso")
+        const infos = alertas.filter(a => a.tipo === "info")
+
+        return (
+          <>
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:59,animation:"fadeIn 0.2s ease"}} onClick={()=>setAlertasModalOpen(false)}/>
+            <div style={{
+              position:"fixed",top:0,right:0,bottom:0,width:360,maxWidth:"100%",
+              background:"#fff",boxShadow:"-4px 0 24px rgba(0,0,0,0.15)",zIndex:60,
+              display:"flex",flexDirection:"column",animation:"slideLeftIn 0.3s cubic-bezier(0.34,1.56,0.64,1)",
+            }}>
+              {/* Header */}
+              <div style={{padding:"18px 20px 14px",borderBottom:"1px solid #F0F0F0",flex:"0 0 auto"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div>
+                    <h3 style={{fontWeight:800,fontSize:16,color:"#111",margin:0}}>Alertas da Semana</h3>
+                    <p style={{fontSize:12,color:"#9CA3AF",marginTop:4,margin:0}}>Semana {format(weekDays[0],"d",{locale:ptBR})} a {format(weekDays[6],"d 'de' MMMM",{locale:ptBR})}</p>
+                  </div>
+                  <button onClick={()=>setAlertasModalOpen(false)} style={{background:"#F4F4F5",border:"none",cursor:"pointer",padding:"6px",borderRadius:8,color:"#71717A",lineHeight:0}}><X size={16}/></button>
+                </div>
+              </div>
+
+              {/* Body */}
+              <div style={{overflowY:"auto",flex:1,padding:"16px 20px"}}>
+                {alertas.length === 0 ? (
+                  <div style={{textAlign:"center",color:"#9CA3AF",fontSize:12,padding:"40px 16px"}}>
+                    <div style={{fontSize:32,marginBottom:8}}>✅</div>
+                    <div style={{fontWeight:600}}>Sem alertas!</div>
+                    <div style={{fontSize:11,marginTop:4,opacity:0.7}}>A escala está bem coberta.</div>
+                  </div>
+                ) : (
+                  <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                    {erros.length > 0 && (
+                      <div>
+                        <div style={{fontSize:11,fontWeight:700,color:"#991B1B",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{color:"#EF4444"}}>🚨</span> {erros.length} {erros.length===1?"Erro":"Erros"}
+                        </div>
+                        {erros.map(a => (
+                          <div key={a.id} style={{padding:"10px 12px",borderRadius:8,marginBottom:8,background:"#FEF2F2",border:"1px solid #FECACA",borderLeft:"3px solid #EF4444"}}>
+                            <div style={{fontWeight:600,fontSize:12,color:"#991B1B"}}>{a.mensagem}</div>
+                            {a.detalhe && <div style={{fontSize:11,color:"#9CA3AF",marginTop:4}}>↳ {a.detalhe}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {avisos.length > 0 && (
+                      <div>
+                        <div style={{fontSize:11,fontWeight:700,color:"#92400E",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{color:"#F59E0B"}}>⚠️</span> {avisos.length} {avisos.length===1?"Aviso":"Avisos"}
+                        </div>
+                        {avisos.map(a => (
+                          <div key={a.id} style={{padding:"10px 12px",borderRadius:8,marginBottom:8,background:"#FFFBEB",border:"1px solid #FDE68A",borderLeft:"3px solid #F59E0B"}}>
+                            <div style={{fontWeight:600,fontSize:12,color:"#92400E"}}>{a.mensagem}</div>
+                            {a.detalhe && <div style={{fontSize:11,color:"#9CA3AF",marginTop:4}}>↳ {a.detalhe}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {infos.length > 0 && (
+                      <div>
+                        <div style={{fontSize:11,fontWeight:700,color:"#1E40AF",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{color:"#3B82F6"}}>ℹ️</span> {infos.length} {infos.length===1?"Info":"Infos"}
+                        </div>
+                        {infos.map(a => (
+                          <div key={a.id} style={{padding:"10px 12px",borderRadius:8,marginBottom:8,background:"#EFF6FF",border:"1px solid #BFDBFE",borderLeft:"3px solid #3B82F6"}}>
+                            <div style={{fontWeight:600,fontSize:12,color:"#1E40AF"}}>{a.mensagem}</div>
+                            {a.detalhe && <div style={{fontSize:11,color:"#9CA3AF",marginTop:4}}>↳ {a.detalhe}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div style={{padding:"14px 20px",borderTop:"1px solid #F0F0F0",backgroundColor:"#F9FAFB",flex:"0 0 auto",textAlign:"center"}}>
+                <button onClick={()=>setAlertasModalOpen(false)} style={{width:"100%",background:"#4F46E5",color:"#fff",border:"none",borderRadius:8,padding:"10px 16px",cursor:"pointer",fontSize:13,fontWeight:600,transition:"background 0.2s"}} onMouseEnter={e=>(e.currentTarget.style.background="#4338CA")} onMouseLeave={e=>(e.currentTarget.style.background="#4F46E5")}>
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </>
+        )
+      })()}
+
       <style>{`
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
         @keyframes slideUp{from{opacity:0;transform:translateY(20px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
-        
+        @keyframes slideLeftIn{from{opacity:0;transform:translateX(100%)}to{opacity:1;transform:translateX(0)}}
+
         /* Melhorias visuais da tabela */
         table tbody tr:nth-child(even) {
           background-color: #f9f9f9;
