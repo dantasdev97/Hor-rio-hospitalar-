@@ -320,9 +320,10 @@ export default function EscalaSemanal() {
   }
 
   // ── Pre-compute mensal → semanal assignment map ────────────────────────────
-  // Each mensal candidate fills ALL postos covered by their turno (in POSTOS order).
-  // Postos already at max capacity or where the aux has a restriction are skipped.
-  // Multi-person postos can hold up to getMaxPersons() candidates.
+  // Uses turno.postos (from DB) — not the hardcoded POSTO_SCHEDULE — so the
+  // distribution respects the actual postos configured on each turno.
+  // Each aux occupies exactly ONE posto (first available from turno.postos order).
+  // Multiple aux on the same turno distribute sequentially.
   const mensalAssignMap = useMemo((): Map<string, string[]> => {
     const map = new Map<string, string[]>()
     // Aux already manually assigned in semanal → skip from auto-distribution
@@ -331,33 +332,38 @@ export default function EscalaSemanal() {
     )
     for (const day of weekDays) {
       const dateStr = format(day, "yyyy-MM-dd")
-      for (const turnoLetra of TURNOS) {
-        const d = getDay(day)
-        const dayType: DayType = d === 0 ? "sunday" : d === 6 ? "saturday" : "weekday"
-        const activeAuxPostos = POSTOS.filter(p =>
-          POSTO_SCHEDULE[p.key]?.shifts.includes(turnoLetra) &&
-          POSTO_SCHEDULE[p.key]?.days.includes(dayType) &&
-          getPostoTipo(p.key, turnoLetra) === "auxiliar"
-        ).map(p => p.key)
-        if (!activeAuxPostos.length) continue
-        const candidates = mensalEntries.filter(me => {
-          if (me.data !== dateStr || !me.auxiliar_id || !me.turno_id) return false
-          if (manualAuxKeys.has(`${dateStr}|${turnoLetra}|${me.auxiliar_id}`)) return false
-          const t = turnosData.find(t => t.id === me.turno_id)
-          return !!(t && turnoToLetra(t) === turnoLetra)
+      const d = getDay(day)
+      const dayType: DayType = d === 0 ? "sunday" : d === 6 ? "saturday" : "weekday"
+
+      // Process each mensal entry for this day
+      const dayEntries = mensalEntries.filter(me =>
+        me.data === dateStr && me.auxiliar_id && me.turno_id
+      )
+      for (const me of dayEntries) {
+        const turno = turnosData.find(t => t.id === me.turno_id)
+        if (!turno) continue
+        const turnoLetra = turnoToLetra(turno)
+        if (!turnoLetra) continue
+        if (manualAuxKeys.has(`${dateStr}|${turnoLetra}|${me.auxiliar_id}`)) continue
+
+        // Postos configured on this turno (DB), filtered to valid + aux + active day
+        const turnoPostos = (turno.postos ?? []).filter(p => {
+          if (!POSTOS.find(pp => pp.key === p)) return false          // unknown posto → skip
+          const postoKey = p as PostoKey
+          if (getPostoTipo(postoKey, turnoLetra) !== "auxiliar") return false
+          const rule = POSTO_SCHEDULE[postoKey]
+          return !rule || rule.days.includes(dayType)                 // respect day schedule
         })
-        // Each aux occupies exactly ONE posto (first available in POSTOS order).
-        // Multiple aux on the same turno distribute sequentially: aux1→posto[0], aux2→posto[1], etc.
-        // Postos at max capacity or where the aux has a restriction are skipped.
-        for (const me of candidates) {
-          for (const posto of activeAuxPostos) {
-            const max = getMaxPersons(posto as PostoKey, turnoLetra)
-            const current = map.get(`${dateStr}|${turnoLetra}|${posto}`) ?? []
-            if (current.length >= max) continue
-            if (!auxTemRestricao(me.auxiliar_id!, posto, turnoLetra, dateStr)) {
-              map.set(`${dateStr}|${turnoLetra}|${posto}`, [...current, me.auxiliar_id!])
-              break
-            }
+
+        // Assign aux to first available posto from turno's configured list
+        for (const posto of turnoPostos) {
+          const postoKey = posto as PostoKey
+          const max = getMaxPersons(postoKey, turnoLetra)
+          const current = map.get(`${dateStr}|${turnoLetra}|${posto}`) ?? []
+          if (current.length >= max) continue
+          if (!auxTemRestricao(me.auxiliar_id!, posto, turnoLetra, dateStr)) {
+            map.set(`${dateStr}|${turnoLetra}|${posto}`, [...current, me.auxiliar_id!])
+            break
           }
         }
       }
