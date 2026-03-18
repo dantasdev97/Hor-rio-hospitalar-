@@ -58,6 +58,11 @@ function isMultiPerson(posto: PostoKey, turno: TurnoLetra): boolean {
 }
 function postoInfo(key: PostoKey) { return POSTOS.find(p => p.key===key)! }
 
+const ABSENCE_LABELS: Record<string, string> = {
+  D: "Descanso", F: "Folga", Fe: "Comp. Feriado",
+  FAA: "Férias Ano Anterior", L: "Licença", Aci: "Acidente Trabalho",
+}
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 const HORARIOS_KEY = "cfg_horarios"
 const DEFAULT_CFG = { maxTurnosSemana: 5, maxTurnosNoturnos: 2, bloquearTurnosConsecutivos: true, horasDescansMinimas: 11, maxDiasConsecutivos: 6, maxTurnosMes: 22, maxTurnosNoturnosMes: 4, alertasConflito: true, permitirSubstituicoes: false }
@@ -135,6 +140,7 @@ export default function EscalaSemanal() {
   const [mensalEntries, setMensalEntries] = useState<MensalEntry[]>([])
   const [turnosData,    setTurnosData]    = useState<TurnoComPostos[]>([])
   const [restricoes,    setRestricoes]    = useState<Restricao[]>([])
+  const [ausenciasEntries, setAusenciasEntries] = useState<{ id:string; data:string; auxiliar_id:string|null; codigo_especial:string|null }[]>([])
   const [sharingWA,     setSharingWA]     = useState(false)
   const [showToast,  setShowToast]  = useState(false)
   const [toastMsg,   setToastMsg]   = useState("")
@@ -164,7 +170,7 @@ export default function EscalaSemanal() {
   // ── Fetch ─────────────────────────────────────────────────────────────────
   async function fetchAll() {
     setLoading(true)
-    const [{ data:a },{ data:d },{ data:e },{ data:m },{ data:t },{ data:r }] = await Promise.all([
+    const [{ data:a },{ data:d },{ data:e },{ data:m },{ data:t },{ data:r },{ data:abs }] = await Promise.all([
       supabase.from("auxiliares").select("id,nome,trabalha_fds").eq("disponivel",true).order("nome"),
       supabase.from("doutores").select("id,nome").order("nome"),
       supabase.from("escalas").select("id,data,posto,turno_letra,auxiliar_id,doutor_id")
@@ -177,6 +183,10 @@ export default function EscalaSemanal() {
         .not("turno_id","is",null),
       supabase.from("turnos").select("id,nome,horario_inicio,horario_fim,postos"),
       supabase.from("restricoes").select("id,auxiliar_id,turno_id,posto,motivo,data_inicio,data_fim"),
+      supabase.from("escalas").select("id,data,auxiliar_id,codigo_especial")
+        .eq("tipo_escala","mensal")
+        .gte("data",startDate).lte("data",endDate)
+        .not("codigo_especial","is",null),
     ])
     setAuxiliares(a ?? [])
     setDoutores(d ?? [])
@@ -184,6 +194,7 @@ export default function EscalaSemanal() {
     setMensalEntries(m ?? [])
     setTurnosData((t ?? []).map(x => ({ ...x, postos: (x.postos as string[] | null) ?? [] })))
     setRestricoes(r ?? [])
+    setAusenciasEntries(abs ?? [])
     setLoading(false)
   }
 
@@ -195,6 +206,15 @@ export default function EscalaSemanal() {
       .gte("data",startDate).lte("data",endDate)
       .not("turno_id","is",null)
     if (m) setMensalEntries(m)
+  }
+
+  async function refetchAusenciasEntries() {
+    const { data: abs } = await supabase
+      .from("escalas").select("id,data,auxiliar_id,codigo_especial")
+      .eq("tipo_escala","mensal")
+      .gte("data",startDate).lte("data",endDate)
+      .not("codigo_especial","is",null)
+    if (abs) setAusenciasEntries(abs)
   }
 
   useEffect(() => { fetchAll() }, [startDate])
@@ -221,6 +241,7 @@ export default function EscalaSemanal() {
           const row = (payload.new ?? payload.old) as { data?: string; tipo_escala?: string } | undefined
           if (row?.tipo_escala === 'mensal' && row?.data && row.data >= startDate && row.data <= endDate) {
             refetchMensalEntries()
+            refetchAusenciasEntries()
           }
         })
       .subscribe()
@@ -294,6 +315,10 @@ export default function EscalaSemanal() {
       }
     }
     return "este posto ou turno"
+  }
+
+  function getAusenciaCode(auxId: string, date: string): string | null {
+    return ausenciasEntries.find(a => a.auxiliar_id === auxId && a.data === date)?.codigo_especial ?? null
   }
 
   function getAuxBlockReason(
@@ -1075,8 +1100,17 @@ export default function EscalaSemanal() {
         : null
     ])
   )
-  const availableList = searchFiltered.filter(p => selCell ? !auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data) : true)
-  const restrictedList = searchFiltered.filter(p => selCell ? auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data) : false)
+  const availableList = searchFiltered.filter(p => {
+    if (!selCell) return true
+    if (auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data)) return false
+    if (getAusenciaCode(p.id, selCell.data)) return false
+    return true
+  })
+  const restrictedList = searchFiltered.filter(p => {
+    if (!selCell) return false
+    return auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data) ||
+      !!getAusenciaCode(p.id, selCell.data)
+  })
   const allocatedTodayList = selCell
     ? searchFiltered.filter(p =>
         escalas.some(e => e.auxiliar_id === p.id && e.data === selCell.data) ||
@@ -1414,7 +1448,9 @@ export default function EscalaSemanal() {
                 const isSel = isDouble ? selPersonIds.includes(p.id) : selPersonId===p.id
                 const isDisabledMulti = isDouble && !isSel && selPersonIds.length >= maxPersons
                 const blockReason = auxBlockReasons.get(p.id) ?? null
-                const isBlocked = !!blockReason
+                const ausCode = selCell ? getAusenciaCode(p.id, selCell.data) : null
+                const ausLabel = ausCode ? `${ABSENCE_LABELS[ausCode] ?? ausCode} (${ausCode})` : null
+                const isBlocked = !!blockReason || !!ausLabel
                 const isDisabledFinal = isBlocked || isDisabledMulti
                 const pRestr = selCell
                   ? auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data)
@@ -1437,9 +1473,10 @@ export default function EscalaSemanal() {
                     <div style={{ flex:1 }}>
                       <div style={{ fontSize:"13px",fontWeight:isSel?600:500,color:isSel?"#1A3A4A":isBlocked?"#9CA3AF":"#333" }}>{p.nome}</div>
                       {blockReason && <div style={{ fontSize:"10px",color:"#EF4444",marginTop:"1px" }}>{blockReason}</div>}
+                      {ausLabel && !blockReason && <div style={{ fontSize:"10px",color:"#7C3AED",marginTop:"1px" }}>Ausência: {ausLabel}</div>}
                     </div>
                     {pRestr && !isBlocked && <span title="Restrição ativa para este posto/turno" style={{ fontSize:"14px" }}>⚠️</span>}
-                    {isBlocked && <span title={blockReason ?? ""} style={{ fontSize:"14px" }}>🔒</span>}
+                    {isBlocked && <span title={blockReason ?? ausLabel ?? ""} style={{ fontSize:"14px" }}>🔒</span>}
                     {isSel && <div style={{ width:"22px",height:"22px",borderRadius:"50%",backgroundColor:accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}><Check size={13} color="#FFF" strokeWidth={2.5}/></div>}
                   </button>
                 )

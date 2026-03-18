@@ -5,6 +5,7 @@ import { ptBR } from "date-fns/locale"
 import {
   ChevronLeft, ChevronRight, X, Check,
   FileDown, MessageCircle, Wand2, Trash2, RotateCcw, Loader2, Printer, Loader, CalendarDays,
+  AlertCircle, MoreVertical,
 } from "lucide-react"
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
@@ -186,9 +187,13 @@ export default function EscalaMensal() {
   const [substitutoModalOpen, setSubstitutoModalOpen] = useState(false)
   const [substitutoAuxId, setSubstitutoAuxId] = useState<string | null>(null)
   const [substitutoData, setSubstitutoData] = useState<string | null>(null)
-  const searchRef = useRef<HTMLInputElement>(null)
-  const tableRef  = useRef<HTMLTableElement>(null)
+  const [alertasModalOpen, setAlertasModalOpen] = useState(false)
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const [alertaFiltro, setAlertaFiltro] = useState<"todos"|"erro"|"aviso"|"info">("todos")
+  const searchRef    = useRef<HTMLInputElement>(null)
+  const tableRef     = useRef<HTMLTableElement>(null)
   const prevAlertIds = useRef(new Set<string>())
+  const exportMenuRef = useRef<HTMLDivElement>(null)
 
   const year        = currentDate.getFullYear()
   const month       = currentDate.getMonth()
@@ -218,6 +223,17 @@ export default function EscalaMensal() {
     }
     prevAlertIds.current = currentIds
   }, [alertas, loading])
+
+  // Click-outside para fechar export menu
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setExportMenuOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [])
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   async function fetchAll() {
@@ -310,7 +326,16 @@ export default function EscalaMensal() {
     const d = mkDateStr(day)
     const ex = escalas.find(e => e.auxiliar_id===auxId && e.data===d)
     setSelCell({ auxiliarId: auxId, data: d })
-    setSelTurnoId(ex?.turno_id ?? null)
+    // Pre-select turno from existing mensal record, or from semanal-derived entry
+    let preSelTurnoId: string | null = ex?.turno_id ?? null
+    if (!ex) {
+      const sems = getSemanaisForAux(auxId, day)
+      if (sems.length > 0) {
+        const t = resolverTurnoDeSemanal(sems[0].turno_letra, sems[0].posto)
+        if (t) preSelTurnoId = t.id
+      }
+    }
+    setSelTurnoId(preSelTurnoId)
     setSelCodigo(ex?.codigo_especial ?? null)
     setSearch("")
     setDialogOpen(true)
@@ -1230,12 +1255,79 @@ export default function EscalaMensal() {
           )}
 
           <div className="w-px h-6 bg-gray-200 mx-1"/>
-          <Button variant="outline" size="sm" onClick={printEscala} disabled={loading} className="gap-2"><Printer className="h-4 w-4"/> Imprimir</Button>
-          <Button variant="outline" size="sm" onClick={exportPDF} disabled={loading} className="gap-2"><FileDown className="h-4 w-4"/> Transferir PDF</Button>
-          <Button variant="outline" size="sm" onClick={shareWA} disabled={loading || sharingWA} className="gap-2 border-green-400 text-green-700 hover:bg-green-50">
-            {sharingWA ? <Loader className="h-4 w-4 animate-spin"/> : <MessageCircle className="h-4 w-4"/>}
-            {sharingWA ? "A enviar..." : "WhatsApp"}
+
+          {/* Alertas */}
+          <Button
+            onClick={() => { setAlertasModalOpen(true); setAlertaFiltro("todos") }}
+            disabled={loading}
+            variant="outline"
+            size="sm"
+            className="gap-2 relative border-amber-300 text-amber-700 hover:bg-amber-50"
+          >
+            <AlertCircle className="h-4 w-4"/>
+            Alertas
+            {alertas.filter(a => a.tipo === "erro").length > 0 && (
+              <span style={{
+                position:"absolute", top:-6, right:-6,
+                background:"#EF4444", color:"#fff", fontSize:10, fontWeight:800,
+                borderRadius:99, minWidth:16, height:16,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                padding:"0 4px", boxShadow:"0 1px 4px rgba(239,68,68,0.5)",
+              }}>
+                {alertas.filter(a => a.tipo === "erro").length}
+              </span>
+            )}
           </Button>
+
+          {/* Dropdown Export */}
+          <div className="relative" ref={exportMenuRef}>
+            <Button
+              onClick={() => setExportMenuOpen(!exportMenuOpen)}
+              disabled={loading}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+            >
+              <MoreVertical className="h-4 w-4"/> Exportar
+            </Button>
+            {exportMenuOpen && (
+              <>
+                <div style={{position:"fixed",inset:0}} onClick={() => setExportMenuOpen(false)}/>
+                <div style={{
+                  position:"absolute", top:"100%", right:0, marginTop:6,
+                  background:"#fff", border:"1px solid #E5E7EB", borderRadius:8,
+                  boxShadow:"0 10px 24px rgba(0,0,0,0.12)", zIndex:50, minWidth:180, overflow:"hidden",
+                }}>
+                  <button
+                    onClick={() => { printEscala(); setExportMenuOpen(false) }}
+                    style={{ width:"100%",padding:"10px 14px",textAlign:"left",border:"none",background:"none",cursor:"pointer",fontSize:13,color:"#374151",display:"flex",alignItems:"center",gap:10,borderBottom:"1px solid #F3F4F6",transition:"background 0.2s" }}
+                    onMouseEnter={e => (e.currentTarget.style.background="#F9FAFB")}
+                    onMouseLeave={e => (e.currentTarget.style.background="none")}
+                  >
+                    <Printer size={16}/> Imprimir
+                  </button>
+                  <button
+                    onClick={() => { exportPDF(); setExportMenuOpen(false) }}
+                    style={{ width:"100%",padding:"10px 14px",textAlign:"left",border:"none",background:"none",cursor:"pointer",fontSize:13,color:"#374151",display:"flex",alignItems:"center",gap:10,borderBottom:"1px solid #F3F4F6",transition:"background 0.2s" }}
+                    onMouseEnter={e => (e.currentTarget.style.background="#F9FAFB")}
+                    onMouseLeave={e => (e.currentTarget.style.background="none")}
+                  >
+                    <FileDown size={16}/> Baixar PDF
+                  </button>
+                  <button
+                    onClick={() => { shareWA(); setExportMenuOpen(false) }}
+                    disabled={sharingWA}
+                    style={{ width:"100%",padding:"10px 14px",textAlign:"left",border:"none",background:"none",cursor:sharingWA?"not-allowed":"pointer",fontSize:13,color:sharingWA?"#D1D5DB":"#10B981",display:"flex",alignItems:"center",gap:10,transition:"background 0.2s",opacity:sharingWA?0.6:1 }}
+                    onMouseEnter={e => !sharingWA && (e.currentTarget.style.background="#F0FDF4")}
+                    onMouseLeave={e => (e.currentTarget.style.background="none")}
+                  >
+                    {sharingWA ? <Loader size={16} className="animate-spin"/> : <MessageCircle size={16}/>}
+                    {sharingWA ? "A enviar..." : "WhatsApp"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1295,105 +1387,185 @@ export default function EscalaMensal() {
         {SPECIAL.map(s=><span key={s.code} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded border" style={{background:s.bg,color:s.text,borderColor:s.bg}}><strong>{s.code}</strong> — {s.label}</span>)}
       </div>}
 
-      {/* ── Painel de Alertas ────────────────────────────────────────────── */}
-      {!loading && (() => {
-        const erros    = alertas.filter(a => a.tipo === "erro")
-        const avisos   = alertas.filter(a => a.tipo === "aviso")
-        const infos    = alertas.filter(a => a.tipo === "info")
-        const byCateg  = (cat: AlertaMensal["categoria"]) => alertas.filter(a => a.categoria === cat)
-
+      {/* Modal de Alertas Mensais — desliza da direita */}
+      {alertasModalOpen && (() => {
         const SEC_CFG = [
-          { key:"cobertura" as const, label:"Falta de Cobertura",  icon:"🚨", color:"#991B1B", bg:"#FEF2F2", border:"#FECACA" },
-          { key:"descanso"  as const, label:"Violações de Descanso",icon:"😴", color:"#92400E", bg:"#FFFBEB", border:"#FDE68A" },
-          { key:"excesso"   as const, label:"Excessos de Turnos",   icon:"⚠️", color:"#92400E", bg:"#FFFBEB", border:"#FDE68A" },
-          { key:"ausencia"  as const, label:"Ausências Registadas", icon:"📋", color:"#1E40AF", bg:"#EFF6FF", border:"#BFDBFE" },
+          { key:"cobertura" as const, label:"Falta de Cobertura",   icon:"🚨", color:"#991B1B", bg:"#FEF2F2", border:"#FECACA",  tipo:"erro"  as const },
+          { key:"descanso"  as const, label:"Violações de Descanso", icon:"😴", color:"#92400E", bg:"#FFFBEB", border:"#FDE68A",  tipo:"aviso" as const },
+          { key:"excesso"   as const, label:"Excessos de Turnos",    icon:"⚠️", color:"#92400E", bg:"#FFFBEB", border:"#FDE68A",  tipo:"aviso" as const },
+          { key:"ausencia"  as const, label:"Ausências Registadas",  icon:"📋", color:"#1E40AF", bg:"#EFF6FF", border:"#BFDBFE",  tipo:"info"  as const },
         ] as const
 
-        const ROW_STYLE = (tipo: AlertaMensal["tipo"]): React.CSSProperties => ({
-          display:"flex", flexDirection:"column", gap:2,
-          padding:"6px 10px", borderRadius:6, marginBottom:3,
-          background: tipo==="erro"?"#FEF2F2": tipo==="aviso"?"#FFFBEB":"#EFF6FF",
-          borderLeft:`3px solid ${tipo==="erro"?"#EF4444":tipo==="aviso"?"#F59E0B":"#3B82F6"}`,
-          border:`1px solid ${tipo==="erro"?"#FECACA":tipo==="aviso"?"#FDE68A":"#BFDBFE"}`,
-          fontSize:12, color: tipo==="erro"?"#991B1B":tipo==="aviso"?"#92400E":"#1E40AF",
-        })
+        const erros  = alertas.filter(a => a.tipo === "erro")
+        const avisos = alertas.filter(a => a.tipo === "aviso")
+        const infos  = alertas.filter(a => a.tipo === "info")
 
-        if (alertas.length === 0) return (
-          <div style={{ margin:"12px 0",padding:"12px 16px",background:"#F0FDF4",border:"1px solid #86EFAC",borderRadius:10,fontSize:12,color:"#166534",display:"flex",gap:8,alignItems:"center",fontWeight:600 }}>
-            ✅ Escala sem alertas — todos os turnos com cobertura adequada.
-          </div>
-        )
+        const filtrados = alertaFiltro === "todos" ? alertas
+          : alertas.filter(a => a.tipo === alertaFiltro)
+
+        const byCategFiltered = (cat: typeof SEC_CFG[number]["key"]) =>
+          filtrados.filter(a => a.categoria === cat)
+
+        const FILTROS = [
+          { id:"todos"  as const, label:"Todos",    count: alertas.length, bg:"#F3F4F6", active:"#111827", border:"#D1D5DB"  },
+          { id:"erro"   as const, label:"Erros",    count: erros.length,   bg:"#FEF2F2", active:"#991B1B", border:"#FECACA"  },
+          { id:"aviso"  as const, label:"Avisos",   count: avisos.length,  bg:"#FFFBEB", active:"#92400E", border:"#FDE68A"  },
+          { id:"info"   as const, label:"Ausências",count: infos.length,   bg:"#EFF6FF", active:"#1E40AF", border:"#BFDBFE"  },
+        ]
 
         return (
-          <div style={{ margin:"12px 0",borderRadius:10,overflow:"hidden",border:"1px solid #E5E7EB",fontSize:12 }}>
-
-            {/* Barra de sumário */}
-            <div style={{ padding:"9px 14px",background:"#F9FAFB",borderBottom:"1px solid #E5E7EB",display:"flex",gap:10,alignItems:"center",flexWrap:"wrap" }}>
-              {erros.length  > 0 && <span style={{ background:"#FEF2F2",border:"1px solid #FECACA",color:"#991B1B",fontWeight:700,borderRadius:99,padding:"2px 10px" }}>🚨 {erros.length} erro{erros.length!==1?"s":""}</span>}
-              {avisos.length > 0 && <span style={{ background:"#FFFBEB",border:"1px solid #FDE68A",color:"#92400E",fontWeight:700,borderRadius:99,padding:"2px 10px" }}>⚠️ {avisos.length} aviso{avisos.length!==1?"s":""}</span>}
-              {infos.length  > 0 && <span style={{ background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",fontWeight:700,borderRadius:99,padding:"2px 10px" }}>📋 {infos.length} ausência{infos.length!==1?"s":""}</span>}
-              <span style={{ marginLeft:"auto",color:"#9CA3AF",fontSize:11,fontStyle:"italic" }}>
-                {format(currentDate,"MMMM yyyy",{locale:ptBR})}
-              </span>
-            </div>
-
-            {/* Banner "resolvido" transitório */}
-            {resolvidoBanner > 0 && (
-              <div style={{ padding:"8px 14px",background:"#F0FDF4",borderBottom:"1px solid #86EFAC",color:"#166534",fontWeight:700,display:"flex",gap:6,alignItems:"center",animation:"mFadeIn 0.3s ease" }}>
-                ✅ {resolvidoBanner} alerta{resolvidoBanner!==1?"s":""} resolvido{resolvidoBanner!==1?"s":""}!
-              </div>
-            )}
-
-            {/* Secções colapsáveis por categoria */}
-            <div style={{ background:"#FAFAFA" }}>
-              {SEC_CFG.map(sec => {
-                const items = byCateg(sec.key)
-                if (items.length === 0) return null
-                const isOpen = openSec[sec.key]
-                return (
-                  <div key={sec.key} style={{ borderBottom:"1px solid #E5E7EB" }}>
-                    {/* Cabeçalho da secção (clicável) */}
-                    <button
-                      onClick={() => setOpenSec(p => ({ ...p, [sec.key]: !p[sec.key] }))}
-                      style={{ width:"100%",display:"flex",gap:8,alignItems:"center",padding:"8px 14px",background:isOpen?sec.bg:"#F9FAFB",border:"none",cursor:"pointer",textAlign:"left",borderBottom:isOpen?`1px solid ${sec.border}`:"none" }}
-                    >
-                      <span>{sec.icon}</span>
-                      <span style={{ fontWeight:700,color:sec.color,flex:1 }}>{sec.label}</span>
-                      <span style={{ background:sec.border,color:sec.color,fontWeight:800,borderRadius:99,padding:"1px 8px",fontSize:11 }}>{items.length}</span>
-                      <span style={{ color:"#9CA3AF",fontSize:10 }}>{isOpen?"▲":"▼"}</span>
-                    </button>
-
-                    {/* Lista de alertas da secção */}
-                    {isOpen && (
-                      <div style={{ padding:"6px 8px 6px",maxHeight:220,overflowY:"auto" }}>
-                        {items.map(a => (
-                          <div key={a.id} style={{...ROW_STYLE(a.tipo), flexDirection:"row" as const, alignItems:"center", justifyContent:"space-between", flexWrap:"wrap" as const}}>
-                            <div style={{flex:1,minWidth:0}}>
-                              <span style={{ fontWeight:600 }}>{a.mensagem}</span>
-                              {a.detalhe && <div style={{ opacity:0.75,fontSize:11 }}>↳ {a.detalhe}</div>}
-                            </div>
-                            {a.acao && (
-                              <button
-                                onClick={() => handleAlertAction(a.acao!.auxId, a.acao!.dia)}
-                                style={{
-                                  background:"#4F46E5",color:"#fff",border:"none",borderRadius:6,
-                                  padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",
-                                  whiteSpace:"nowrap",marginLeft:8,flexShrink:0,
-                                  boxShadow:"0 1px 4px rgba(79,70,229,0.3)",
-                                }}
-                              >
-                                {a.acao.label}
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+          <>
+            <div
+              style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:59,animation:"mFadeIn 0.2s ease"}}
+              onClick={() => setAlertasModalOpen(false)}
+            />
+            <div style={{
+              position:"fixed", top:0, right:0, bottom:0, width:400, maxWidth:"100%",
+              background:"#fff", boxShadow:"-4px 0 32px rgba(0,0,0,0.15)", zIndex:60,
+              display:"flex", flexDirection:"column", animation:"slideLeftIn 0.3s cubic-bezier(0.34,1.56,0.64,1)",
+            }}>
+              {/* Header */}
+              <div style={{padding:"18px 20px 0",flex:"0 0 auto"}}>
+                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:14}}>
+                  <div>
+                    <h3 style={{fontWeight:800,fontSize:16,color:"#111",margin:0}}>Alertas do Mês</h3>
+                    <p style={{fontSize:12,color:"#9CA3AF",marginTop:3,margin:"3px 0 0",textTransform:"capitalize"}}>
+                      {format(currentDate,"MMMM yyyy",{locale:ptBR})}
+                    </p>
                   </div>
-                )
-              })}
+                  <button
+                    onClick={() => setAlertasModalOpen(false)}
+                    style={{background:"#F4F4F5",border:"none",cursor:"pointer",padding:6,borderRadius:8,color:"#71717A",lineHeight:0}}
+                  >
+                    <X size={16}/>
+                  </button>
+                </div>
+
+                {/* Banner resolvido */}
+                {resolvidoBanner > 0 && (
+                  <div style={{padding:"8px 12px",background:"#F0FDF4",border:"1px solid #86EFAC",borderRadius:8,color:"#166534",fontWeight:700,fontSize:12,display:"flex",gap:6,alignItems:"center",marginBottom:12,animation:"mFadeIn 0.3s ease"}}>
+                    ✅ {resolvidoBanner} alerta{resolvidoBanner!==1?"s":""} resolvido{resolvidoBanner!==1?"s":""}!
+                  </div>
+                )}
+
+                {/* Filtros */}
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",paddingBottom:14,borderBottom:"1px solid #F0F0F0"}}>
+                  {FILTROS.map(f => {
+                    const isActive = alertaFiltro === f.id
+                    return (
+                      <button
+                        key={f.id}
+                        onClick={() => setAlertaFiltro(f.id)}
+                        style={{
+                          padding:"4px 10px", borderRadius:99, fontSize:12, fontWeight:700,
+                          border:`1px solid ${isActive ? f.border : "#E5E7EB"}`,
+                          background: isActive ? f.bg : "#fff",
+                          color: isActive ? f.active : "#6B7280",
+                          cursor:"pointer", transition:"all 0.15s",
+                          display:"flex", alignItems:"center", gap:5,
+                        }}
+                      >
+                        {f.label}
+                        <span style={{
+                          background: isActive ? f.border : "#F3F4F6",
+                          color: isActive ? f.active : "#9CA3AF",
+                          borderRadius:99, padding:"0 6px", fontSize:10, fontWeight:800,
+                        }}>{f.count}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Body */}
+              <div style={{overflowY:"auto",flex:1,padding:"14px 20px"}}>
+                {filtrados.length === 0 ? (
+                  <div style={{textAlign:"center",color:"#9CA3AF",fontSize:13,padding:"48px 16px"}}>
+                    <div style={{fontSize:36,marginBottom:10}}>✅</div>
+                    <div style={{fontWeight:700,color:"#374151"}}>Sem alertas!</div>
+                    <div style={{fontSize:12,marginTop:4,opacity:0.7}}>A escala está bem coberta.</div>
+                  </div>
+                ) : (
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    {SEC_CFG.map(sec => {
+                      const items = byCategFiltered(sec.key)
+                      if (items.length === 0) return null
+                      const isOpen = openSec[sec.key]
+                      return (
+                        <div key={sec.key} style={{borderRadius:10,overflow:"hidden",border:`1px solid ${sec.border}`,marginBottom:8}}>
+                          <button
+                            onClick={() => setOpenSec(p => ({...p, [sec.key]: !p[sec.key]}))}
+                            style={{
+                              width:"100%", display:"flex", gap:8, alignItems:"center",
+                              padding:"10px 14px", background:isOpen ? sec.bg : "#FAFAFA",
+                              border:"none", cursor:"pointer", textAlign:"left",
+                              borderBottom: isOpen ? `1px solid ${sec.border}` : "none",
+                              transition:"background 0.15s",
+                            }}
+                          >
+                            <span style={{fontSize:15}}>{sec.icon}</span>
+                            <span style={{fontWeight:700,color:sec.color,flex:1,fontSize:12}}>{sec.label}</span>
+                            <span style={{background:sec.border,color:sec.color,fontWeight:800,borderRadius:99,padding:"2px 8px",fontSize:11}}>{items.length}</span>
+                            <span style={{color:"#9CA3AF",fontSize:10,marginLeft:4}}>{isOpen?"▲":"▼"}</span>
+                          </button>
+                          {isOpen && (
+                            <div style={{padding:"8px",background:"#fff"}}>
+                              {items.map(a => (
+                                <div key={a.id} style={{
+                                  display:"flex", alignItems:"center", justifyContent:"space-between",
+                                  gap:8, padding:"8px 10px", borderRadius:8, marginBottom:4,
+                                  background: a.tipo==="erro"?"#FEF2F2": a.tipo==="aviso"?"#FFFBEB":"#EFF6FF",
+                                  borderLeft:`3px solid ${a.tipo==="erro"?"#EF4444":a.tipo==="aviso"?"#F59E0B":"#3B82F6"}`,
+                                  border:`1px solid ${a.tipo==="erro"?"#FECACA":a.tipo==="aviso"?"#FDE68A":"#BFDBFE"}`,
+                                }}>
+                                  <div style={{flex:1,minWidth:0}}>
+                                    <div style={{fontWeight:600,fontSize:12,color:a.tipo==="erro"?"#991B1B":a.tipo==="aviso"?"#92400E":"#1E40AF"}}>
+                                      {a.mensagem}
+                                    </div>
+                                    {a.detalhe && (
+                                      <div style={{fontSize:11,color:"#9CA3AF",marginTop:2}}>↳ {a.detalhe}</div>
+                                    )}
+                                  </div>
+                                  {a.acao && (
+                                    <button
+                                      onClick={() => { handleAlertAction(a.acao!.auxId, a.acao!.dia); setAlertasModalOpen(false) }}
+                                      style={{
+                                        background:"#4F46E5", color:"#fff", border:"none", borderRadius:7,
+                                        padding:"5px 11px", fontSize:11, fontWeight:700, cursor:"pointer",
+                                        whiteSpace:"nowrap", flexShrink:0,
+                                        boxShadow:"0 1px 4px rgba(79,70,229,0.3)",
+                                        transition:"background 0.15s",
+                                      }}
+                                      onMouseEnter={e => (e.currentTarget.style.background="#4338CA")}
+                                      onMouseLeave={e => (e.currentTarget.style.background="#4F46E5")}
+                                    >
+                                      {a.acao.label}
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div style={{padding:"14px 20px",borderTop:"1px solid #F0F0F0",background:"#F9FAFB",flex:"0 0 auto"}}>
+                <button
+                  onClick={() => setAlertasModalOpen(false)}
+                  style={{width:"100%",background:"#4F46E5",color:"#fff",border:"none",borderRadius:9,padding:"10px 16px",cursor:"pointer",fontSize:13,fontWeight:700,transition:"background 0.2s"}}
+                  onMouseEnter={e => (e.currentTarget.style.background="#4338CA")}
+                  onMouseLeave={e => (e.currentTarget.style.background="#4F46E5")}
+                >
+                  Fechar
+                </button>
+              </div>
             </div>
-          </div>
+          </>
         )
       })()}
 
@@ -1573,6 +1745,7 @@ export default function EscalaMensal() {
       <style>{`
         @keyframes mFadeIn{from{opacity:0}to{opacity:1}}
         @keyframes mSlideUp{from{opacity:0;transform:translate(-50%,-46%) scale(0.95)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+        @keyframes slideLeftIn{from{opacity:0;transform:translateX(100%)}to{opacity:1;transform:translateX(0)}}
         @keyframes cellFlash{0%{filter:brightness(1.9) saturate(1.5)}50%{filter:brightness(1.3) saturate(1.2)}100%{filter:brightness(1) saturate(1)}}
         
         /* Toast notification */
