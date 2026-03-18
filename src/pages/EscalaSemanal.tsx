@@ -346,16 +346,17 @@ export default function EscalaSemanal() {
           const t = turnosData.find(t => t.id === me.turno_id)
           return !!(t && turnoToLetra(t) === turnoLetra)
         })
-        // Each aux fills ALL postos covered by their turno, in POSTOS order.
-        // Skips postos at max capacity, already containing this aux, or where the aux has a restriction.
+        // Each aux occupies exactly ONE posto (first available in POSTOS order).
+        // Multiple aux on the same turno distribute sequentially: aux1→posto[0], aux2→posto[1], etc.
+        // Postos at max capacity or where the aux has a restriction are skipped.
         for (const me of candidates) {
           for (const posto of activeAuxPostos) {
             const max = getMaxPersons(posto as PostoKey, turnoLetra)
             const current = map.get(`${dateStr}|${turnoLetra}|${posto}`) ?? []
             if (current.length >= max) continue
-            if (current.includes(me.auxiliar_id!)) continue
             if (!auxTemRestricao(me.auxiliar_id!, posto, turnoLetra, dateStr)) {
               map.set(`${dateStr}|${turnoLetra}|${posto}`, [...current, me.auxiliar_id!])
+              break
             }
           }
         }
