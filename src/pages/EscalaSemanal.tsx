@@ -383,8 +383,20 @@ export default function EscalaSemanal() {
     data: string
   ): string | null {
     const cfg = loadCfg()
-    // Regra 1: Aux com turno N no mesmo dia não pode fazer turno M (só se bloquearTurnosConsecutivos)
-    if (turnoLetra === "M" && cfg.bloquearTurnosConsecutivos) {
+    // Regra 1: Aux com turno N no dia anterior não pode fazer turno M no dia seguinte
+    if (turnoLetra === "M") {
+      const prevDate = format(addDays(parseISO(data), -1), "yyyy-MM-dd")
+      const hasNocPrevMensal = mensalEntries.some(me => {
+        if (me.auxiliar_id !== auxId || me.data !== prevDate || !me.turno_id) return false
+        const t = turnosData.find(t => t.id === me.turno_id)
+        return !!(t && turnoToLetra(t) === "N")
+      })
+      const hasNocPrevSemanal = escalas.some(e =>
+        e.auxiliar_id === auxId && e.data === prevDate && e.turno_letra === "N"
+      )
+      if (hasNocPrevMensal || hasNocPrevSemanal)
+        return "Trabalhou no turno noturno do dia anterior — descanso obrigatório"
+      // Também bloquear se tem N no mesmo dia
       const hasNocMensal = mensalEntries.some(me => {
         if (me.auxiliar_id !== auxId || me.data !== data || !me.turno_id) return false
         const t = turnosData.find(t => t.id === me.turno_id)
@@ -1131,12 +1143,14 @@ export default function EscalaSemanal() {
     if (!selCell) return true
     if (auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data)) return false
     if (getAusenciaCode(p.id, selCell.data)) return false
+    if (auxBlockReasons.get(p.id)) return false  // bloqueios operacionais → separador Restrições
     return true
   })
   const restrictedList = searchFiltered.filter(p => {
     if (!selCell) return false
     return auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data) ||
-      !!getAusenciaCode(p.id, selCell.data)
+      !!getAusenciaCode(p.id, selCell.data) ||
+      !!auxBlockReasons.get(p.id)  // inclui bloqueios operacionais (N→M, duplo posto)
   })
   const allocatedTodayList = selCell
     ? searchFiltered.filter(p =>
@@ -1390,8 +1404,8 @@ export default function EscalaSemanal() {
                               : isDocCell ? "Clique para atribuir Doutor" : "Clique para atribuir"}
                           style={{ ...cellBase,
                             backgroundColor: isHighlighted ? "#DBEAFE" : !opera ? "#E5E7EB" : p.bg,
-                            opacity: !opera ? 0.5 : derived ? 0.75 : 1,
-                            fontStyle: (derived || placeholder) ? "italic" : "normal",
+                            opacity: !opera ? 0.5 : 1,
+                            fontStyle: placeholder ? "italic" : "normal",
                             color: placeholder ? "#9CA3AF" : "inherit",
                             cursor: !opera ? "not-allowed" : "pointer",
                             border: temRestr ? "2px solid #EF4444" : isHighlighted ? "2px solid #3B82F6" : B,
