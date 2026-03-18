@@ -320,9 +320,9 @@ export default function EscalaSemanal() {
   }
 
   // ── Pre-compute mensal → semanal assignment map ────────────────────────────
-  // Each mensal candidate is assigned to exactly ONE posto (in POSTOS order).
-  // Postos where the aux has a restriction are skipped; multi-person postos
-  // can hold up to getMaxPersons() candidates.
+  // Each mensal candidate fills ALL postos covered by their turno (in POSTOS order).
+  // Postos already at max capacity or where the aux has a restriction are skipped.
+  // Multi-person postos can hold up to getMaxPersons() candidates.
   const mensalAssignMap = useMemo((): Map<string, string[]> => {
     const map = new Map<string, string[]>()
     // Aux already manually assigned in semanal → skip from auto-distribution
@@ -346,16 +346,16 @@ export default function EscalaSemanal() {
           const t = turnosData.find(t => t.id === me.turno_id)
           return !!(t && turnoToLetra(t) === turnoLetra)
         })
-        // Assign each candidate to the first posto with remaining capacity where
-        // the aux has no restriction. One pass through candidates, inner loop through postos.
+        // Each aux fills ALL postos covered by their turno, in POSTOS order.
+        // Skips postos at max capacity, already containing this aux, or where the aux has a restriction.
         for (const me of candidates) {
           for (const posto of activeAuxPostos) {
             const max = getMaxPersons(posto as PostoKey, turnoLetra)
             const current = map.get(`${dateStr}|${turnoLetra}|${posto}`) ?? []
             if (current.length >= max) continue
+            if (current.includes(me.auxiliar_id!)) continue
             if (!auxTemRestricao(me.auxiliar_id!, posto, turnoLetra, dateStr)) {
               map.set(`${dateStr}|${turnoLetra}|${posto}`, [...current, me.auxiliar_id!])
-              break
             }
           }
         }
