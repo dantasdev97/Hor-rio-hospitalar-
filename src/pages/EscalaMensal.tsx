@@ -432,10 +432,29 @@ export default function EscalaMensal() {
     const dataFormatada = format(parseISO(selCell.data), "d/M", { locale: ptBR })
     closeDialog()
     if (ex) {
-      setEscalas(p=>p.filter(e=>e.id!==ex.id))
-      const {error}=await supabase.from("escalas").delete().eq("id",ex.id)
-      if (error) fetchAll()
-      else showToastMsg(`Atribuição removida — ${auxNome}, dia ${dataFormatada}`)
+      // Derive turno letra to also clean up semanal entries
+      const turnoObj = turnos.find(t => t.id === ex.turno_id)
+      const turnoLetra = turnoObj ? getTurnoLetraMensal(turnoObj) : null
+      // Optimistic update — remove from both local states immediately
+      setEscalas(p => p.filter(e => e.id !== ex.id))
+      if (turnoLetra) {
+        setEscalasSemanais(p => p.filter(s =>
+          !(s.auxiliar_id === selCell.auxiliarId && s.data === selCell.data && s.turno_letra === turnoLetra)
+        ))
+      }
+      // Persist to DB: delete mensal record
+      const { error } = await supabase.from("escalas").delete().eq("id", ex.id)
+      if (error) { fetchAll(); return }
+      // Also delete semanal entries for this aux+date+turnoLetra (manual overrides in EscalaSemanal)
+      if (turnoLetra) {
+        await supabase.from("escalas")
+          .delete()
+          .eq("tipo_escala", "semanal")
+          .eq("auxiliar_id", selCell.auxiliarId)
+          .eq("data", selCell.data)
+          .eq("turno_letra", turnoLetra)
+      }
+      showToastMsg(`Atribuição removida — ${auxNome}, dia ${dataFormatada}`)
     }
   }
 
