@@ -5,7 +5,6 @@ import {
   Users,
   Clock,
   Stethoscope,
-  Ban,
   Settings,
   X,
   Hospital,
@@ -22,7 +21,6 @@ const navItems = [
   { to: "/turnos", label: "Turnos", icon: Clock },
   { to: "/turno-postos", label: "Turnos → Postos", icon: Link2 },
   { to: "/doutores", label: "Doutores", icon: Stethoscope },
-  { to: "/restricoes", label: "Restrições", icon: Ban },
   { to: "/configuracoes", label: "Configurações", icon: Settings },
 ]
 
