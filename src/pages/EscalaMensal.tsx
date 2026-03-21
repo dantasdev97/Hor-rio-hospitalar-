@@ -37,11 +37,9 @@ function loadCfg() {
 
 // ─── Helpers de turno noturno e descanso ─────────────────────────────────────
 function isNoturnoTurno(t: Turno): boolean {
-  // Prioriza o nome: qualquer turno "N..." é noturno (ex: N5, N noite, etc.)
-  if (t.nome.toUpperCase().startsWith("N")) return true
-  // Fallback: usa horario_inicio se disponível e não for "00:00"
+  // Usa horario_inicio se disponível; senão recai no nome
   if (t.horario_inicio && t.horario_inicio !== "00:00") return t.horario_inicio >= "20:00"
-  return false
+  return t.nome.toUpperCase().startsWith("N")
 }
 function toMinutes(time: string): number {
   const [h, m] = time.split(":").map(Number)
@@ -442,17 +440,6 @@ export default function EscalaMensal() {
         alertas.push({
           id:`aviso_excesso_total_${aux.id}`, tipo:"aviso", categoria:"excesso",
           mensagem:`${aux.nome} — ${total} turnos este mês (limite: ${cfg.maxTurnosMes})`,
-        })
-    }
-
-    // ── G) Auxiliares com poucos turnos (subcarregados) ───────────────────
-    const minTurnosMes = 15
-    for (const aux of auxiliares) {
-      const total = escalas.filter(e => e.auxiliar_id === aux.id && e.turno_id).length
-      if (total > 0 && total < minTurnosMes)
-        alertas.push({
-          id:`aviso_subcarregado_${aux.id}`, tipo:"aviso", categoria:"excesso",
-          mensagem:`${aux.nome} — apenas ${total} turno${total !== 1 ? "s" : ""} este mês (mínimo recomendado: ${minTurnosMes})`,
         })
     }
 
@@ -954,7 +941,7 @@ export default function EscalaMensal() {
           await navigator.clipboard.write([item])
           
           // Mostrar toast de sucesso
-          setToastMsg("✅ Imagem copiada! Cole no WhatsApp com Ctrl+V (Windows) ou ⌘+V (Mac)")
+          setToastMsg("✅ Imagem copiada! Cole no WhatsApp com Ctrl+V")
           setShowToast(true)
           
           // Auto-hide toast após 3 segundos
@@ -977,7 +964,7 @@ export default function EscalaMensal() {
           document.body.removeChild(link)
           URL.revokeObjectURL(url)
           
-          setToastMsg("✅ Imagem descarregada! Partilhe manualmente no WhatsApp")
+          setToastMsg("✅ Imagem baixada! Compartilhe manualmente no WhatsApp")
           setShowToast(true)
           setTimeout(() => setShowToast(false), 3000)
           setSharingWA(false)
@@ -990,7 +977,7 @@ export default function EscalaMensal() {
     } catch (err) {
       console.error("Erro ao capturar tabela:", err)
       setSharingWA(false)
-      setToastMsg("❌ Erro ao processar imagem. A abrir WhatsApp...")
+      setToastMsg("❌ Erro ao processar imagem. Abrindo WhatsApp...")
       setShowToast(true)
       setTimeout(() => setShowToast(false), 3000)
       
@@ -1042,10 +1029,10 @@ export default function EscalaMensal() {
 
           <div className="w-px h-6 bg-gray-200 mx-1"/>
           <Button variant="outline" size="sm" onClick={printEscala} disabled={loading} className="gap-2"><Printer className="h-4 w-4"/> Imprimir</Button>
-          <Button variant="outline" size="sm" onClick={exportPDF} disabled={loading} className="gap-2"><FileDown className="h-4 w-4"/> Transferir PDF</Button>
+          <Button variant="outline" size="sm" onClick={exportPDF} disabled={loading} className="gap-2"><FileDown className="h-4 w-4"/> Baixar PDF</Button>
           <Button variant="outline" size="sm" onClick={shareWA} disabled={loading || sharingWA} className="gap-2 border-green-400 text-green-700 hover:bg-green-50">
             {sharingWA ? <Loader className="h-4 w-4 animate-spin"/> : <MessageCircle className="h-4 w-4"/>}
-            {sharingWA ? "A enviar..." : "WhatsApp"}
+            {sharingWA ? "Enviando..." : "WhatsApp"}
           </Button>
         </div>
       </div>
@@ -1092,7 +1079,7 @@ export default function EscalaMensal() {
                   </tr>
                 )
               })}
-              {sortedAuxiliares.length===0&&<tr><td colSpan={days.length+2} style={{textAlign:"center",padding:32,color:"#9CA3AF",fontSize:13}}>Nenhum auxiliar registado.</td></tr>}
+              {sortedAuxiliares.length===0&&<tr><td colSpan={days.length+2} style={{textAlign:"center",padding:32,color:"#9CA3AF",fontSize:13}}>Nenhum auxiliar cadastrado.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1113,7 +1100,7 @@ export default function EscalaMensal() {
         const SEC_CFG = [
           { key:"cobertura" as const, label:"Falta de Cobertura",  icon:"🚨", color:"#991B1B", bg:"#FEF2F2", border:"#FECACA" },
           { key:"descanso"  as const, label:"Violações de Descanso",icon:"😴", color:"#92400E", bg:"#FFFBEB", border:"#FDE68A" },
-          { key:"excesso"   as const, label:"Carga de Trabalho",    icon:"⚠️", color:"#92400E", bg:"#FFFBEB", border:"#FDE68A" },
+          { key:"excesso"   as const, label:"Excessos de Turnos",   icon:"⚠️", color:"#92400E", bg:"#FFFBEB", border:"#FDE68A" },
           { key:"ausencia"  as const, label:"Ausências Registadas", icon:"📋", color:"#1E40AF", bg:"#EFF6FF", border:"#BFDBFE" },
         ] as const
 
@@ -1234,7 +1221,7 @@ export default function EscalaMensal() {
                 onFocus={ev=>(ev.target.style.borderColor="#6366F1")} onBlur={ev=>(ev.target.style.borderColor="#E5E7EB")}/>
             </div>
             {filteredTurnos.length===0
-              ? <p style={{textAlign:"center",color:"#9CA3AF",fontSize:12,padding:"14px 0"}}>{turnos.length===0?"Nenhum turno registado.":"Sem resultados."}</p>
+              ? <p style={{textAlign:"center",color:"#9CA3AF",fontSize:12,padding:"14px 0"}}>{turnos.length===0?"Nenhum turno cadastrado.":"Sem resultados."}</p>
               : <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:7}}>
                   {filteredTurnos.map(t=>{const {bg,text}=getTurnoColor(t);const sel=selTurnoId===t.id;return(
                     <button key={t.id} onClick={()=>selectTurno(t.id)} style={{background:sel?bg:"#FAFAFA",color:sel?text:"#374151",border:`2px solid ${sel?text+"60":"#E5E7EB"}`,borderRadius:10,padding:"10px 12px",cursor:"pointer",fontSize:11,fontWeight:sel?700:500,textAlign:"left",display:"flex",alignItems:"center",justifyContent:"space-between",transition:"all 0.12s",outline:"none",boxShadow:sel?`0 0 0 2px ${bg}`:"none"}}>
