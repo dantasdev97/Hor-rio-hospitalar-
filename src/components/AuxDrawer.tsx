@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useMemo } from "react"
 import { getDaysInMonth, differenceInDays, parseISO, addDays, format } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { X, ChevronLeft, ChevronRight, CalendarDays, Moon, Trash2, User, Calendar } from "lucide-react"
+import { X, ChevronLeft, ChevronRight, CalendarDays, Moon, Trash2, User, Calendar, Ban, ShieldX, ShieldCheck } from "lucide-react"
 import { supabase } from "@/lib/supabaseClient"
-import type { Auxiliar, Ausencia } from "@/types"
+import type { Auxiliar, Ausencia, Turno, Restricao } from "@/types"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -15,6 +15,29 @@ export const SPECIAL = [
   { code: "L",   label: "Licença",             bg: "#DDD6FE", text: "#4C1D95" },
   { code: "Aci", label: "Acidente Trabalho",   bg: "#A5F3FC", text: "#164E63" },
 ] as const
+
+const POSTOS_R = [
+  { key: "RX_URG",    label: "RX URG",          accent: null },
+  { key: "TAC1",      label: "TAC 1",           accent: null },
+  { key: "TAC2",      label: "TAC 2",           accent: null },
+  { key: "EXAM1",     label: "Exames (1)",       accent: "#C4B09A" },
+  { key: "EXAM2",     label: "Exames (2)",       accent: "#C4B09A" },
+  { key: "SALA6",     label: "SALA 6 BB",       accent: "#6abf45" },
+  { key: "SALA7",     label: "SALA 7 EXT",      accent: "#6abf45" },
+  { key: "TRANSPORT", label: "Transportes",     accent: "#e8a44a" },
+] as const
+
+const TURNO_LETRAS = ["M", "T", "N"] as const
+type TurnoLetra = (typeof TURNO_LETRAS)[number]
+
+function turnoParaLetra(t: { nome: string; horario_inicio: string }): TurnoLetra | null {
+  const n = t.nome.toUpperCase()
+  if (t.horario_inicio >= "20:00" || n.startsWith("N")) return "N"
+  if (n.startsWith("MT")) return null
+  if (n.startsWith("M")) return "M"
+  if (n.startsWith("T")) return "T"
+  return null
+}
 
 const DIAS_CAL   = ["S","T","Q","Q","S","S","D"]
 const MESES_FULL = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
@@ -90,13 +113,29 @@ function RangeCal({ startDate, endDate, onChange }: {
   )
 }
 
+// ─── Mini toggle ──────────────────────────────────────────────────────────────
+
+function MiniToggle({ checked, onChange, danger = false }: {
+  checked: boolean; onChange: () => void; danger?: boolean
+}) {
+  const bg = checked ? (danger ? "#EF4444" : "#2563EB") : "#D1D5DB"
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); onChange() }}
+      style={{ width:34,height:19,borderRadius:99,border:"none",cursor:"pointer",background:bg,position:"relative",transition:"background 0.18s",flexShrink:0,padding:0 }}
+    >
+      <span style={{ position:"absolute",top:1.5,left:checked?15.5:1.5,width:16,height:16,borderRadius:"50%",background:"#fff",boxShadow:"0 1px 3px rgba(0,0,0,0.25)",transition:"left 0.18s" }}/>
+    </button>
+  )
+}
+
 // ─── AuxDrawer ────────────────────────────────────────────────────────────────
 
 export function AuxDrawer({ aux, onClose, onUpdated, onAusenciaSaved }: {
   aux: Auxiliar; onClose: () => void; onUpdated: (a: Auxiliar) => void
   onAusenciaSaved?: () => void
 }) {
-  const [step, setStep]             = useState<1|2>(1)
+  const [step, setStep]             = useState<1|2|3>(1)
   const [ausencias, setAusencias]   = useState<Ausencia[]>([])
   const [ausLoading, setAusLoading] = useState(true)
   const [selCode, setSelCode]       = useState<string | null>(null)
@@ -108,6 +147,11 @@ export function AuxDrawer({ aux, onClose, onUpdated, onAusenciaSaved }: {
   // Step 2
   const [filterCode, setFilterCode] = useState<string | null>(null)
   const [page, setPage]             = useState(0)
+  // Step 3 — restrições
+  const [turnos,            setTurnos]            = useState<Turno[]>([])
+  const [restricoes,        setRestricoes]        = useState<Restricao[]>([])
+  const [restricoesLoading, setRestricoesLoading] = useState(false)
+  const [restricoesLoaded,  setRestricoesLoaded]  = useState(false)
 
   async function fetchAus() {
     setAusLoading(true)
@@ -119,7 +163,79 @@ export function AuxDrawer({ aux, onClose, onUpdated, onAusenciaSaved }: {
     setAusencias(data ?? [])
     setAusLoading(false)
   }
+
+  async function fetchRestricoes() {
+    setRestricoesLoading(true)
+    const [{ data: t }, { data: r }] = await Promise.all([
+      supabase.from("turnos").select("*").order("nome"),
+      supabase.from("restricoes").select("*").eq("auxiliar_id", aux.id),
+    ])
+    setTurnos(t ?? [])
+    setRestricoes(r ?? [])
+    setRestricoesLoading(false)
+    setRestricoesLoaded(true)
+  }
+
   useEffect(() => { fetchAus() }, [aux.id])
+
+  useEffect(() => {
+    if (step === 3 && !restricoesLoaded) {
+      fetchRestricoes()
+    }
+  }, [step])
+
+  // ── Restrições helpers ───────────────────────────────────────────────────
+
+  function getRTurnoId(turnoId: string) {
+    return restricoes.find(r => r.turno_id === turnoId && !r.posto)?.id
+  }
+  function getRPostoId(posto: string) {
+    return restricoes.find(r => r.posto === posto && !r.turno_id)?.id
+  }
+  function getRCombinadoId(posto: string, turnoId: string) {
+    return restricoes.find(r => r.posto === posto && r.turno_id === turnoId)?.id
+  }
+
+  async function toggleTurno(turnoId: string) {
+    const eid = getRTurnoId(turnoId)
+    if (eid) {
+      await supabase.from("restricoes").delete().eq("id", eid)
+      setRestricoes(p => p.filter(r => r.id !== eid))
+    } else {
+      const { data } = await supabase.from("restricoes")
+        .insert({ auxiliar_id: aux.id, turno_id: turnoId, posto: null })
+        .select().single()
+      if (data) setRestricoes(p => [...p, data])
+    }
+  }
+
+  async function togglePosto(posto: string) {
+    const eid = getRPostoId(posto)
+    if (eid) {
+      await supabase.from("restricoes").delete().eq("id", eid)
+      setRestricoes(p => p.filter(r => r.id !== eid))
+    } else {
+      const { data } = await supabase.from("restricoes")
+        .insert({ auxiliar_id: aux.id, turno_id: null, posto })
+        .select().single()
+      if (data) setRestricoes(p => [...p, data])
+    }
+  }
+
+  async function toggleCombinado(posto: string, turnoId: string) {
+    const eid = getRCombinadoId(posto, turnoId)
+    if (eid) {
+      await supabase.from("restricoes").delete().eq("id", eid)
+      setRestricoes(p => p.filter(r => r.id !== eid))
+    } else {
+      const { data } = await supabase.from("restricoes")
+        .insert({ auxiliar_id: aux.id, posto, turno_id: turnoId })
+        .select().single()
+      if (data) setRestricoes(p => [...p, data])
+    }
+  }
+
+  // ── Ausências ────────────────────────────────────────────────────────────
 
   async function saveAusencia() {
     if (!selCode || !dateStart || !dateEnd) return
@@ -199,6 +315,19 @@ export function AuxDrawer({ aux, onClose, onUpdated, onAusenciaSaved }: {
   const totalAusenciaDays = Object.entries(stats).filter(([c]) => ["Fe","FAA","L","Aci"].includes(c)).reduce((s,[,v])=>s+v,0)
   const nextAus = ausencias.filter(a => parseISO(a.data_fim) >= new Date()).sort((a,b)=>a.data_inicio.localeCompare(b.data_inicio))[0]
 
+  // Step 3 — turno id by letra map
+  const turnoIdByLetra = useMemo(() =>
+    TURNO_LETRAS.reduce((acc, letra) => {
+      const found = turnos.find(t => turnoParaLetra(t) === letra)
+      if (found) acc[letra] = found.id
+      return acc
+    }, {} as Partial<Record<TurnoLetra, string>>)
+  , [turnos])
+
+  const totalRestricoes = restricoes.length
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   const overlayStyle: React.CSSProperties = {
     position: "fixed",
     inset: 0,
@@ -246,7 +375,8 @@ export function AuxDrawer({ aux, onClose, onUpdated, onAusenciaSaved }: {
           <div style={{ display:"flex",gap:2 }}>
             {([
               { s:1 as const, icon:<CalendarDays size={13}/>, label:"Ausências" },
-              { s:2 as const, icon:<User size={13}/>,          label:"Perfil" },
+              { s:2 as const, icon:<User size={13}/>,         label:"Perfil" },
+              { s:3 as const, icon:<Ban size={13}/>,          label:"Restrições" },
             ]).map(({ s, icon, label }) => (
               <button key={s} onClick={() => setStep(s)}
                 style={{ flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:5,padding:"9px 12px",border:"none",cursor:"pointer",fontSize:12,fontWeight:step===s?700:500,color:step===s?"#2563EB":"rgba(255,255,255,0.7)",background:step===s?"#fff":"transparent",borderRadius:"8px 8px 0 0",transition:"all 0.15s" }}>
@@ -461,6 +591,208 @@ export function AuxDrawer({ aux, onClose, onUpdated, onAusenciaSaved }: {
                 </>
               )}
             </div>
+          </>}
+
+          {/* ════ STEP 3 — RESTRIÇÕES ════ */}
+          {step === 3 && <>
+
+            {/* Summary banner */}
+            <div style={{
+              borderRadius: 12,
+              padding: "12px 15px",
+              background: totalRestricoes > 0 ? "linear-gradient(135deg,#FEF2F2,#FFF5F5)" : "linear-gradient(135deg,#F0FDF4,#F7FEF9)",
+              border: `1px solid ${totalRestricoes > 0 ? "#FECACA" : "#BBF7D0"}`,
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <div style={{
+                  width:36, height:36, borderRadius:9,
+                  background: totalRestricoes > 0 ? "#FEE2E2" : "#DCFCE7",
+                  display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0
+                }}>
+                  {totalRestricoes > 0
+                    ? <ShieldX size={17} color="#DC2626"/>
+                    : <ShieldCheck size={17} color="#16A34A"/>
+                  }
+                </div>
+                <div>
+                  <div style={{ fontSize:13, fontWeight:700, color: totalRestricoes > 0 ? "#991B1B" : "#166534" }}>
+                    {totalRestricoes > 0 ? `${totalRestricoes} bloqueio${totalRestricoes > 1 ? "s" : ""} activo${totalRestricoes > 1 ? "s" : ""}` : "Sem restrições"}
+                  </div>
+                  <div style={{ fontSize:11, color: totalRestricoes > 0 ? "#DC2626" : "#16A34A", marginTop:2 }}>
+                    {totalRestricoes > 0 ? "Este auxiliar tem postos/turnos bloqueados" : "Auxiliar pode ser alocado em qualquer posto"}
+                  </div>
+                </div>
+              </div>
+              {restricoesLoading && <span style={{ fontSize:11, color:"#9CA3AF" }}>A carregar…</span>}
+            </div>
+
+            {/* Postos section */}
+            <div style={{ background:"#F8FAFC", borderRadius:12, padding:"14px 15px", border:"1px solid #E5E7EB" }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:1.2, color:"#94A3B8", marginBottom:11 }}>
+                Postos de Trabalho
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7 }}>
+                {POSTOS_R.map(posto => {
+                  const restrito = !!getRPostoId(posto.key)
+                  return (
+                    <div
+                      key={posto.key}
+                      onClick={() => togglePosto(posto.key)}
+                      style={{
+                        borderRadius: 9,
+                        padding: "9px 11px",
+                        border: `1px solid ${restrito ? "#FECACA" : "#E5E7EB"}`,
+                        background: restrito ? "#FEF2F2" : "#fff",
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        cursor: "pointer",
+                        transition: "all 0.18s",
+                        borderLeft: posto.accent ? `3px solid ${posto.accent}` : restrito ? "3px solid #FCA5A5" : "3px solid #E5E7EB",
+                      }}
+                    >
+                      <div style={{ display:"flex", alignItems:"center", gap:7, minWidth:0 }}>
+                        {restrito
+                          ? <ShieldX size={13} color="#EF4444" style={{ flexShrink:0 }}/>
+                          : <ShieldCheck size={13} color="#D1D5DB" style={{ flexShrink:0 }}/>
+                        }
+                        <div style={{ minWidth:0 }}>
+                          <div style={{ fontSize:12, fontWeight:700, color: restrito ? "#991B1B" : "#374151", lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                            {posto.label}
+                          </div>
+                          <div style={{ fontSize:10, color: restrito ? "#EF4444" : "#9CA3AF", marginTop:1 }}>
+                            {restrito ? "Bloqueado" : "Permitido"}
+                          </div>
+                        </div>
+                      </div>
+                      <MiniToggle checked={restrito} onChange={() => togglePosto(posto.key)} danger />
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Turnos section */}
+            {turnos.length > 0 && (
+              <div style={{ background:"#F8FAFC", borderRadius:12, padding:"14px 15px", border:"1px solid #E5E7EB" }}>
+                <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:1.2, color:"#94A3B8", marginBottom:11 }}>
+                  Turnos
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7 }}>
+                  {turnos.map(turno => {
+                    const restrito = !!getRTurnoId(turno.id)
+                    const letra = turnoParaLetra(turno)
+                    const letraColors: Record<string, { bg: string; text: string }> = {
+                      M: { bg: "#FEF9C3", text: "#92400E" },
+                      T: { bg: "#DBEAFE", text: "#1D4ED8" },
+                      N: { bg: "#EDE9FE", text: "#5B21B6" },
+                    }
+                    const lc = letra ? letraColors[letra] : null
+                    return (
+                      <div
+                        key={turno.id}
+                        onClick={() => toggleTurno(turno.id)}
+                        style={{
+                          borderRadius: 9,
+                          padding: "9px 11px",
+                          border: `1px solid ${restrito ? "#FECACA" : "#E5E7EB"}`,
+                          background: restrito ? "#FEF2F2" : "#fff",
+                          display: "flex", alignItems: "center", justifyContent: "space-between",
+                          cursor: "pointer",
+                          transition: "all 0.18s",
+                        }}
+                      >
+                        <div style={{ display:"flex", alignItems:"center", gap:7, minWidth:0 }}>
+                          {letra && lc && (
+                            <span style={{ width:20, height:20, borderRadius:5, background:lc.bg, color:lc.text, fontSize:11, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                              {letra}
+                            </span>
+                          )}
+                          <div style={{ minWidth:0 }}>
+                            <div style={{ fontSize:12, fontWeight:700, color: restrito ? "#991B1B" : "#374151", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                              {turno.nome}
+                            </div>
+                            <div style={{ fontSize:10, color: restrito ? "#EF4444" : "#9CA3AF", marginTop:1 }}>
+                              {turno.horario_inicio.slice(0,5)} – {turno.horario_fim.slice(0,5)}
+                            </div>
+                          </div>
+                        </div>
+                        <MiniToggle checked={restrito} onChange={() => toggleTurno(turno.id)} danger />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Combo matrix */}
+            {Object.keys(turnoIdByLetra).length > 0 && (
+              <div style={{ background:"#F8FAFC", borderRadius:12, padding:"14px 15px", border:"1px solid #E5E7EB" }}>
+                <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:1.2, color:"#94A3B8", marginBottom:4 }}>
+                  Bloqueios Específicos  Posto × Turno
+                </div>
+                <div style={{ fontSize:11, color:"#9CA3AF", marginBottom:12 }}>
+                  Bloquear uma combinação sem bloquear o posto ou turno inteiro
+                </div>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign:"left", paddingBottom:8, fontWeight:600, color:"#6B7280", fontSize:11, paddingRight:12, minWidth:110 }}>Posto</th>
+                        {TURNO_LETRAS.filter(l => turnoIdByLetra[l]).map(letra => {
+                          const letraColors: Record<string, string> = { M:"#92400E", T:"#1D4ED8", N:"#5B21B6" }
+                          const letraBg: Record<string, string> = { M:"#FEF9C3", T:"#DBEAFE", N:"#EDE9FE" }
+                          return (
+                            <th key={letra} style={{ textAlign:"center", paddingBottom:8, width:48 }}>
+                              <span style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", width:24, height:24, borderRadius:6, background:letraBg[letra], color:letraColors[letra], fontSize:12, fontWeight:800 }}>
+                                {letra}
+                              </span>
+                            </th>
+                          )
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {POSTOS_R.map((posto, pi) => (
+                        <tr key={posto.key} style={{ borderTop: pi > 0 ? "1px solid #F1F5F9" : "none" }}>
+                          <td style={{ paddingRight:12, paddingTop:7, paddingBottom:7 }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                              {posto.accent && (
+                                <span style={{ width:8, height:8, borderRadius:2, background:posto.accent, flexShrink:0 }}/>
+                              )}
+                              <span style={{ fontWeight:600, color:"#374151", fontSize:11 }}>{posto.label}</span>
+                            </div>
+                          </td>
+                          {TURNO_LETRAS.filter(l => turnoIdByLetra[l]).map(letra => {
+                            const tId = turnoIdByLetra[letra]!
+                            const restrito = !!getRCombinadoId(posto.key, tId)
+                            return (
+                              <td key={letra} style={{ textAlign:"center", paddingTop:5, paddingBottom:5 }}>
+                                <button
+                                  onClick={() => toggleCombinado(posto.key, tId)}
+                                  title={restrito ? `Remover bloqueio ${posto.label} — ${letra}` : `Bloquear ${posto.label} — ${letra}`}
+                                  style={{
+                                    width:34, height:28, borderRadius:7,
+                                    border: restrito ? "1.5px solid #FCA5A5" : "1.5px solid #E5E7EB",
+                                    background: restrito ? "#FEE2E2" : "#F8FAFC",
+                                    color: restrito ? "#DC2626" : "#CBD5E1",
+                                    fontWeight:800, fontSize:13, cursor:"pointer",
+                                    transition:"all 0.15s",
+                                    display:"inline-flex", alignItems:"center", justifyContent:"center",
+                                  }}
+                                >
+                                  {restrito ? "✕" : "–"}
+                                </button>
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
           </>}
 
         </div>
