@@ -1,3 +1,5 @@
+export type EquipaType = 'Equipa 1' | 'Equipa 2' | 'Equipa Transportes'
+
 export interface Auxiliar {
   id: string
   nome: string
@@ -5,6 +7,7 @@ export interface Auxiliar {
   numero_mecanografico: string | null
   contribuinte: string | null
   disponivel: boolean
+  equipa: EquipaType
   created_at: string
 }
 

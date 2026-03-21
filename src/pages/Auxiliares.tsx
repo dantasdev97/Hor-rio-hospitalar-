@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { Plus, Pencil, Trash2 } from "lucide-react"
 import { supabase } from "@/lib/supabaseClient"
-import type { Auxiliar } from "@/types"
+import type { Auxiliar, EquipaType } from "@/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -15,6 +15,9 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
 
 const schema = z.object({
   nome: z.string().min(1, "Nome é obrigatório"),
@@ -29,6 +32,7 @@ export default function Auxiliares() {
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Auxiliar | null>(null)
+  const [selectedEquipa, setSelectedEquipa] = useState<EquipaType>('Equipa 1')
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -45,12 +49,14 @@ export default function Auxiliares() {
 
   function openNew() {
     setEditing(null)
+    setSelectedEquipa('Equipa 1')
     reset({ nome: "", email: "", numero_mecanografico: "", contribuinte: "" })
     setDialogOpen(true)
   }
 
   function openEdit(aux: Auxiliar) {
     setEditing(aux)
+    setSelectedEquipa(aux.equipa)
     reset({
       nome: aux.nome,
       email: aux.email ?? "",
@@ -66,6 +72,7 @@ export default function Auxiliares() {
       email: data.email || null,
       numero_mecanografico: data.numero_mecanografico || null,
       contribuinte: data.contribuinte || null,
+      equipa: selectedEquipa,
     }
 
     if (editing) {
@@ -117,6 +124,7 @@ export default function Auxiliares() {
                 <TableHead>Email</TableHead>
                 <TableHead>Nº Mecanográfico</TableHead>
                 <TableHead>Contribuinte</TableHead>
+                <TableHead>Equipa</TableHead>
                 <TableHead>Disponível</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
@@ -128,6 +136,9 @@ export default function Auxiliares() {
                   <TableCell className="text-gray-500">{aux.email ?? "-"}</TableCell>
                   <TableCell className="text-gray-500">{aux.numero_mecanografico ?? "-"}</TableCell>
                   <TableCell className="text-gray-500">{aux.contribuinte ?? "-"}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{aux.equipa}</Badge>
+                  </TableCell>
                   <TableCell>
                     <button onClick={() => toggleDisponivel(aux)}>
                       <Badge variant={aux.disponivel ? "success" : "destructive"}>
@@ -175,6 +186,19 @@ export default function Auxiliares() {
             <div className="space-y-1.5">
               <Label htmlFor="contribuinte">NIF / Contribuinte</Label>
               <Input id="contribuinte" {...register("contribuinte")} placeholder="Ex: 123456789" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="equipa">Equipa *</Label>
+              <Select value={selectedEquipa} onValueChange={(v) => setSelectedEquipa(v as EquipaType)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecionar equipa..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Equipa 1">Equipa 1</SelectItem>
+                  <SelectItem value="Equipa 2">Equipa 2</SelectItem>
+                  <SelectItem value="Equipa Transportes">Equipa Transportes</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
