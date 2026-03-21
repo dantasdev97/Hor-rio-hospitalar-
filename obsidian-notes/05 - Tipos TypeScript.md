@@ -1,40 +1,46 @@
-# Tipos TypeScript
+---
+tags: [typescript, interfaces, tipos]
+updated: 2026-03-21
+---
 
-> Todas as interfaces e tipos do projecto. Ficheiro principal: `src/types/index.ts`
+# 05 — Tipos TypeScript
+
+> [[00 - MOC (Índice)|← Índice]]
+> Ficheiro: `src/types/index.ts`
 
 ---
 
-## Tipos Globais (`src/types/index.ts`)
+## 📦 Interfaces Principais
 
 ### `Auxiliar`
 ```typescript
-interface Auxiliar {
+export interface Auxiliar {
   id: string
   nome: string
   email: string | null
-  numero_mecanografico: string | null
-  contribuinte: string | null
-  disponivel: boolean
-  trabalha_fds: boolean
+  numero_mecanografico: string | null   // N.º mecanográfico do hospital
+  contribuinte: string | null           // NIF
+  disponivel: boolean                   // Activo no sistema
+  trabalha_fds: boolean                 // Trabalha fins de semana
   created_at: string
 }
 ```
 
 ### `Ausencia`
 ```typescript
-interface Ausencia {
+export interface Ausencia {
   id: string
   auxiliar_id: string
   codigo: string           // D | F | Fe | FAA | L | Aci
-  data_inicio: string      // yyyy-MM-dd
-  data_fim: string         // yyyy-MM-dd
+  data_inicio: string      // YYYY-MM-DD
+  data_fim: string         // YYYY-MM-DD
   created_at: string
 }
 ```
 
 ### `Doutor`
 ```typescript
-interface Doutor {
+export interface Doutor {
   id: string
   nome: string
   numero_mecanografico: string | null
@@ -44,122 +50,127 @@ interface Doutor {
 
 ### `Turno`
 ```typescript
-interface Turno {
+export interface Turno {
   id: string
-  nome: string             // código do turno, ex: "M1", "T2", "N5"
-  horario_inicio: string   // "HH:MM"
-  horario_fim: string      // "HH:MM"
-  cor: string | null       // hex, ex: "#FEF08A"
-  postos: string[]         // chaves dos postos associados
+  nome: string              // Ex: "M1", "T2", "N5", "MT_TAC"
+  horario_inicio: string    // "HH:MM:SS" — hora de início
+  horario_fim: string       // "HH:MM:SS" — hora de fim
+  cor: string | null        // Cor hex personalizada (#RRGGBB)
+  postos: string[]          // Postos associados: ["RX_URG", "TAC2"]
   created_at: string
 }
 ```
 
 ### `DoutorTurno`
 ```typescript
-interface DoutorTurno {
+export interface DoutorTurno {
   id: string
   doutor_id: string
   turno_id: string
-  turno?: Turno            // join opcional
+  turno?: Turno             // Relação carregada opcionalmente
 }
 ```
 
 ### `Escala`
 ```typescript
-interface Escala {
+export interface Escala {
   id: string
-  data: string                          // "yyyy-MM-dd"
+  data: string                            // YYYY-MM-DD
   tipo_escala: 'semanal' | 'mensal'
   turno_id: string | null
   auxiliar_id: string | null
   status: 'disponivel' | 'alocado' | 'bloqueado'
-  codigo_especial: string | null        // D | F | Fe | FAA | L | Aci
-  turno?: Turno                         // join opcional
-  auxiliar?: Auxiliar                   // join opcional
+  codigo_especial: string | null          // D | F | Fe | FAA | L | Aci
+  turno?: Turno                           // Relação opcional
+  auxiliar?: Auxiliar                     // Relação opcional
 }
 ```
 
 ### `Restricao`
 ```typescript
-interface Restricao {
+export interface Restricao {
   id: string
   auxiliar_id: string
-  turno_id: string | null
-  posto: string | null     // chave do posto, ex: "RX_URG"
+  turno_id: string | null    // null = restrição só por posto
+  posto: string | null       // null = restrição só por turno
   motivo: string | null
-  data_inicio: string | null
-  data_fim: string | null
+  data_inicio: string | null // null = sem limite de início
+  data_fim: string | null    // null = sem limite de fim
 }
 ```
 
 ---
 
-## Tipos Locais
+## 🏷️ Tipos Locais (definidos nas páginas)
 
-### `EscalaRow` (em `EscalaMensal.tsx`)
-Versão reduzida de `Escala` para o estado local da página mensal.
+### `EscalaRow` (usado em EscalaMensal e EscalaSemanal)
 ```typescript
-interface EscalaRow {
+// Versão simplificada da Escala para uso interno nas páginas
+type EscalaRow = {
   id: string
   data: string
   auxiliar_id: string | null
+  doutor_id?: string | null
   turno_id: string | null
   codigo_especial: string | null
+  posto?: string | null
+  turno_letra?: string | null
 }
 ```
 
-### `UndoState` (em `EscalaMensal.tsx`)
-Para reverter a última operação de geração ou limpeza.
+### `AlertaMensal` (EscalaMensal)
 ```typescript
-interface UndoState {
-  inserted: EscalaRow[]
-  deleted: EscalaRow[]
-}
-```
-
-### `AlertaMensal` (em `EscalaMensal.tsx`)
-Um alerta gerado pelo sistema de validação da escala.
-```typescript
-interface AlertaMensal {
-  id: string                                              // chave determinística
-  tipo: "erro" | "aviso" | "info"
-  categoria: "ausencia" | "cobertura" | "descanso" | "excesso"
+type AlertaMensal = {
+  id: string          // Unique key para tracking de resoluções
+  tipo: 'erro' | 'aviso' | 'info'
+  categoria: 'ausencia' | 'cobertura' | 'descanso' | 'excesso'
   mensagem: string
-  detalhe?: string                                        // linha extra de contexto
+  dia?: number        // Dia do mês onde ocorre
+  auxNome?: string    // Nome do auxiliar envolvido
+}
+```
+
+### `UndoState` (EscalaMensal e EscalaSemanal)
+```typescript
+type UndoState = {
+  inserted: string[]    // IDs inseridos (para apagar no undo)
+  deleted: EscalaRow[]  // Registos apagados (para re-inserir no undo)
+} | null
+```
+
+### `TurnoLetra` (EscalaSemanal)
+```typescript
+type TurnoLetra = 'M' | 'T' | 'N'
+```
+
+### `TurnoComPostos` (EscalaSemanal)
+```typescript
+type TurnoComPostos = Turno & { postos: string[] }
+```
+
+### `Person` (EscalaSemanal)
+```typescript
+type Person = {
+  id: string
+  nome: string
+  trabalha_fds?: boolean
+}
+```
+
+### `MensalEntry` (EscalaSemanal)
+```typescript
+type MensalEntry = {
+  id: string
+  data: string
+  auxiliar_id: string
+  turno_id: string
 }
 ```
 
 ---
 
-## Tipos da Escala Semanal (`EscalaSemanal.tsx`)
+## 🔗 Ver Também
 
-```typescript
-type PostoKey = "RX_URG" | "TAC2" | "TAC1" | "EXAM1" | "EXAM2" | "SALA6" | "SALA7" | "TRANSPORT"
-type TurnoLetra = "M" | "T" | "N"
-type DayType = "weekday" | "saturday" | "sunday"
-```
-
-### `POSTOS` (array constante)
-```typescript
-const POSTOS = [
-  { key: "RX_URG",    label: "RX URG",              bg: "#FFFFFF" },
-  { key: "TAC2",      label: "TAC 2",               bg: "#FFFFFF" },
-  { key: "TAC1",      label: "TAC 1",               bg: "#FFFFFF" },
-  { key: "EXAM1",     label: "Exames Comp. (1)",    bg: "#C4B09A" },
-  { key: "EXAM2",     label: "Exames Comp. (2)",    bg: "#C4B09A" },
-  { key: "SALA6",     label: "SALA 6 BB",           bg: "#92D050" },
-  { key: "SALA7",     label: "SALA 7 EXT",          bg: "#92D050" },
-  { key: "TRANSPORT", label: "Transportes INT/URG",  bg: "#FFBE7B" },
-] as const
-```
-
----
-
-## Notas Relacionadas
-
-- [[02 - Base de Dados]]
-- [[06 - Lógica de Escalas]]
-- [[09 - Erros e Alertas]]
-
-#typescript #tipos #interfaces
+- [[04 - Base de Dados]] — Schema SQL correspondente
+- [[18 - Códigos Especiais]] — Valores de `codigo_especial`
+- [[19 - Postos e Turnos]] — Valores de `posto` e `turno_letra`

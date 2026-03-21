@@ -1,97 +1,111 @@
-# Visão Geral — Horário Hospitalar
+---
+tags: [visão-geral, stack, deploy]
+updated: 2026-03-21
+---
 
-> Sistema de gestão de escalas para o departamento de Radiologia hospitalar.
+# 01 — Visão Geral do Projecto
+
+> [[00 - MOC (Índice)|← Índice]]
+
+## 🎯 O Que É
+
+Sistema web de gestão de escalas de trabalho para o departamento de **Imagiologia** do **Hospital Leiria CHL**. Permite:
+
+- Gerar escalas mensais automaticamente (cobertura-first + distribuição justa)
+- Gerir a escala semanal por posto de trabalho
+- Controlar ausências, restrições e configurações por auxiliar
+- Exportar para PDF, impressão e partilha WhatsApp
 
 ---
 
-## O Que É
-
-Aplicação web para criar, gerir e exportar escalas de trabalho de auxiliares e médicos num serviço de radiologia hospitalar. Permite geração automática de escalas mensais com validação de regras (descanso, turno noturno, fins-de-semana, etc.).
-
----
-
-## Stack Técnico
+## 🏗️ Stack Tecnológica
 
 | Camada | Tecnologia | Versão |
-|--------|-----------|--------|
-| Framework | React | 19.2.0 |
-| Linguagem | TypeScript | ~5.9.3 |
-| Build | Vite | 5.4.21 |
-| Estilo | Tailwind CSS | 3.4.19 |
-| Backend / DB | Supabase | 2.98.0 |
-| Routing | React Router DOM | 7.13.1 |
-| UI Components | Radix UI + Shadcn | — |
-| Ícones | lucide-react | 0.577.0 |
-| Datas | date-fns (ptBR) | 4.1.0 |
-| PDF | jsPDF + jspdf-autotable | 4.2.0 / 5.0.7 |
-| Captura | html2canvas | 1.4.1 |
-| Formulários | React Hook Form + Zod | 7.71.2 / 4.3.6 |
-| Tabelas avançadas | @tanstack/react-table | 8.21.3 |
+|---|---|---|
+| **Framework UI** | React | 19.2.0 |
+| **Linguagem** | TypeScript | ~5.9.3 |
+| **Build Tool** | Vite | 5.4.21 |
+| **Estilos** | Tailwind CSS | 3.4.19 |
+| **UI Components** | Radix UI + Shadcn | várias |
+| **Backend/DB** | Supabase (PostgreSQL) | 2.98.0 |
+| **Routing** | React Router DOM | 7.13.1 |
+| **Forms** | React Hook Form + Zod | 7.71.2 + 4.3.6 |
+| **Datas** | date-fns | 4.1.0 |
+| **PDF** | jsPDF + autoTable | 4.2.0 + 5.0.7 |
+| **Screenshot** | html2canvas | 1.4.1 |
+| **Ícones** | lucide-react | 0.577.0 |
+| **Tabelas** | @tanstack/react-table | 8.21.3 |
 
 ---
 
-## Deploy
+## 🚀 Deploy & Ambiente
 
-- **Produção:** Vercel, branch `main`
-- **URL produção:** (definido nas env vars do projecto Vercel)
-- **Branch de desenvolvimento:** `claude/fix-auxdrawer-duplicate-property-Wtf9X`
+### Produção
+- **Plataforma:** Vercel
+- **Branch:** `main` → deploy automático
+- **Env vars:** definidas no painel Vercel
+
+### Desenvolvimento
+- **Branch activo:** `claude/fix-auxdrawer-duplicate-property-Wtf9X`
+- **Comando:** `npm run dev`
+
+### Scripts
+```bash
+npm run dev      # Vite dev server
+npm run build    # tsc -b && vite build
+npm run preview  # Preview do build local
+npm run lint     # ESLint
+```
 
 ---
 
-## Variáveis de Ambiente
+## 🔑 Variáveis de Ambiente
 
 ```env
-VITE_SUPABASE_URL=<url do projecto Supabase>
-VITE_SUPABASE_ANON_KEY=<chave anon pública>
+VITE_SUPABASE_URL=       # URL do projecto Supabase
+VITE_SUPABASE_ANON_KEY=  # Chave anónima Supabase
 ```
 
-Definidas em `.env.local` (não comitado) e nas env vars da Vercel.
+> ⚠️ Nunca commitar `.env` — está no `.gitignore`
 
 ---
 
-## Rotas da Aplicação
-
-| Rota | Página | Ficheiro |
-|------|--------|---------|
-| `/login` | Login | `src/pages/Login.tsx` |
-| `/` | Redireciona para `/escala-mensal` | `App.tsx` |
-| `/escala-mensal` | Escala Mensal | `src/pages/EscalaMensal.tsx` |
-| `/escala-semanal` | Escala Semanal | `src/pages/EscalaSemanal.tsx` |
-| `/auxiliares` | Gerir Auxiliares | `src/pages/Auxiliares.tsx` |
-| `/turnos` | Gerir Turnos | `src/pages/Turnos.tsx` |
-| `/turno-postos` | Vincular Turno ↔ Posto | `src/pages/VincularTurnoPosto.tsx` |
-| `/doutores` | Gerir Médicos | `src/pages/Doutores.tsx` |
-| `/restricoes` | Restrições | `src/pages/Restricoes.tsx` |
-| `/configuracoes` | Configurações | `src/pages/Configuracoes.tsx` |
-
-Guards:
-- `RequireAuth` — redireciona para `/login` se não autenticado
-- `RedirectIfAuthed` — redireciona para `/escala-mensal` se já autenticado
-
----
-
-## Estrutura de Pastas
+## 📁 Estrutura de Pastas
 
 ```
-src/
-├── pages/          # Páginas da aplicação
-├── components/     # Componentes reutilizáveis
-│   ├── layout/     # Layout, Sidebar, Header
-│   └── ui/         # Shadcn UI (Button, Dialog, etc.)
-├── contexts/       # AuthContext
-├── lib/            # supabaseClient, utils
-└── types/          # index.ts com todas as interfaces
-
-supabase/
-└── migrations/     # SQL de criação de tabelas
+/
+├── src/
+│   ├── pages/          ← 9 páginas (rotas)
+│   ├── components/     ← AuxDrawer + Shadcn UI
+│   ├── contexts/       ← AuthContext.tsx
+│   ├── lib/            ← supabaseClient.ts
+│   ├── types/          ← index.ts (todas as interfaces)
+│   ├── App.tsx         ← Router principal + guards
+│   └── main.tsx        ← Entry point
+├── supabase/
+│   └── migrations/     ← SQL de criação de tabelas
+├── obsidian-notes/     ← Este vault
+├── public/             ← Assets estáticos
+└── dist/               ← Build output (git ignore)
 ```
 
 ---
 
-## Notas Relacionadas
+## ⚙️ Configuração Vite
 
-- [[02 - Base de Dados]]
-- [[03 - Páginas e Rotas]]
-- [[06 - Lógica de Escalas]]
+```typescript
+// vite.config.ts
+{
+  resolve: { alias: { "@": "./src" } },
+  build: { chunkSizeWarningLimit: 2000 }  // Elevado por causa do jsPDF
+}
+```
 
-#projecto #stack #deploy #rotas
+---
+
+## 🔗 Ver Também
+
+- [[04 - Base de Dados]] — Schema Supabase completo
+- [[22 - Dependências]] — Lista completa de packages
+- [[23 - Histórico Git]] — Evolução do projecto
+- [[21 - Configurações LocalStorage]] — cfg_empresa, cfg_horarios
