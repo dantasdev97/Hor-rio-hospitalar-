@@ -32,8 +32,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function signIn(email: string, password: string): Promise<{ error: string | null }> {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) {
-      if (error.message.includes("Invalid login credentials")) return { error: "Email ou password incorretos." }
-      if (error.message.includes("Email not confirmed")) return { error: "Email não confirmado. Verifique a sua caixa de entrada." }
+      const code = error.status ?? 0
+      if (code === 400 || error.code === "invalid_credentials") return { error: "Email ou password incorretos." }
+      if (code === 403 || error.code === "email_not_confirmed") return { error: "Email não confirmado. Verifique a sua caixa de entrada." }
       return { error: error.message }
     }
     return { error: null }

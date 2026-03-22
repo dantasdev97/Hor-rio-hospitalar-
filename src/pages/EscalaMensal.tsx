@@ -11,6 +11,7 @@ import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 import html2canvas from "html2canvas"
 import { supabase } from "@/lib/supabaseClient"
+import { useConfig } from "@/contexts/ConfigContext"
 import type { Auxiliar, Turno } from "@/types"
 import { Button } from "@/components/ui/button"
 import { AuxDrawer } from "@/components/AuxDrawer"
@@ -32,12 +33,6 @@ const SPECIAL = [
   { code: "Aci", label: "Acidente Trabalho",   bg: "#A5F3FC", text: "#164E63" },
 ] as const
 
-const HORARIOS_KEY = "cfg_horarios"
-const DEFAULT_CFG = { bloquearTurnosConsecutivos: true, horasDescansMinimas: 11, maxTurnosNoturnos: 2, maxTurnosMes: 22, maxTurnosNoturnosMes: 4 }
-function loadCfg() {
-  try { const r = localStorage.getItem(HORARIOS_KEY); return r ? { ...DEFAULT_CFG, ...JSON.parse(r) } : DEFAULT_CFG }
-  catch { return DEFAULT_CFG }
-}
 
 // ─── Helpers de turno noturno e descanso ─────────────────────────────────────
 function isNoturnoTurno(t: Turno): boolean {
@@ -159,6 +154,7 @@ function ConfirmModal({ title, body, onConfirm, onCancel }: { title:string;body:
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function EscalaMensal() {
   const navigate = useNavigate()
+  const { horarios } = useConfig()
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [auxiliares, setAuxiliares]   = useState<Auxiliar[]>([])
   const [turnos, setTurnos]           = useState<Turno[]>([])
@@ -498,7 +494,7 @@ export default function EscalaMensal() {
 
   function calcularAlertas(): AlertaMensal[] {
     const alertas: AlertaMensal[] = []
-    const cfg = loadCfg()
+    const cfg = horarios
     const auxMap = new Map(auxiliares.map(a => [a.id, a]))
 
     const ABSENCE_LABEL: Record<string,string> = {
@@ -707,7 +703,7 @@ export default function EscalaMensal() {
   // ── Gerar Escala Mensal ───────────────────────────────────────────────────
   async function gerarEscalaMensal() {
     if (turnos.length === 0) return
-    const cfg = loadCfg()
+    const cfg = horarios
     const startOfMonthStr = `${year}-${String(month+1).padStart(2,"0")}-01`
     const endOfMonthStr   = `${year}-${String(month+1).padStart(2,"0")}-${String(daysInMonth).padStart(2,"0")}`
 
@@ -793,7 +789,7 @@ export default function EscalaMensal() {
     const auxNocCount: Record<string, number> = Object.fromEntries(sortedAuxiliares.map(a => [a.id, 0]))
     // Fair distribution counter: how many shifts each aux has been pre-planned so far
     const auxPlanCount: Record<string, number> = Object.fromEntries(sortedAuxiliares.map(a => [a.id, 0]))
-    const nocMensalPlan = (cfg as typeof DEFAULT_CFG).maxTurnosNoturnosMes ?? DEFAULT_CFG.maxTurnosNoturnosMes
+    const nocMensalPlan = cfg.maxTurnosNoturnosMes
 
     for (const d of days) {
       const dateStr = mkDateStr(d)

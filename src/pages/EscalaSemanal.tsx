@@ -7,6 +7,7 @@ import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 import html2canvas from "html2canvas"
 import { supabase } from "@/lib/supabaseClient"
+import { useConfig } from "@/contexts/ConfigContext"
 import { Button } from "@/components/ui/button"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -64,12 +65,6 @@ const ABSENCE_LABELS: Record<string, string> = {
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const HORARIOS_KEY = "cfg_horarios"
-const DEFAULT_CFG = { maxTurnosSemana: 5, maxTurnosNoturnos: 2, bloquearTurnosConsecutivos: true, horasDescansMinimas: 11, maxDiasConsecutivos: 6, maxTurnosMes: 22, maxTurnosNoturnosMes: 4, alertasConflito: true, permitirSubstituicoes: false }
-function loadCfg() {
-  try { const r = localStorage.getItem(HORARIOS_KEY); return r ? { ...DEFAULT_CFG, ...JSON.parse(r) } : DEFAULT_CFG }
-  catch { return DEFAULT_CFG }
-}
 
 // ─── Helpers de descanso ─────────────────────────────────────────────────────
 function toMinutesSem(time: string): number {
@@ -124,6 +119,7 @@ function ConfirmModal({ title, body, onConfirm, onCancel }: { title:string;body:
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function EscalaSemanal() {
+  const { horarios } = useConfig()
   const [searchParams, setSearchParams] = useSearchParams()
   const [highlightAuxId,   setHighlightAuxId]   = useState<string | null>(null)
   const [highlightAuxNome, setHighlightAuxNome] = useState<string | null>(null)
@@ -172,32 +168,38 @@ export default function EscalaSemanal() {
   // ── Fetch ─────────────────────────────────────────────────────────────────
   async function fetchAll() {
     setLoading(true)
-    const [{ data:a },{ data:d },{ data:e },{ data:m },{ data:t },{ data:r },{ data:abs }] = await Promise.all([
-      supabase.from("auxiliares").select("id,nome,trabalha_fds").eq("disponivel",true).order("nome"),
-      supabase.from("doutores").select("id,nome").order("nome"),
-      supabase.from("escalas").select("id,data,posto,turno_letra,auxiliar_id,doutor_id")
-        .eq("tipo_escala","semanal")
-        .gte("data",startDate).lte("data",endDate)
-        .not("posto","is",null).not("turno_letra","is",null),
-      supabase.from("escalas").select("id,data,auxiliar_id,turno_id")
-        .eq("tipo_escala","mensal")
-        .gte("data",startDate).lte("data",endDate)
-        .not("turno_id","is",null),
-      supabase.from("turnos").select("id,nome,horario_inicio,horario_fim,postos"),
-      supabase.from("restricoes").select("id,auxiliar_id,turno_id,posto,motivo,data_inicio,data_fim"),
-      supabase.from("escalas").select("id,data,auxiliar_id,codigo_especial")
-        .eq("tipo_escala","mensal")
-        .gte("data",startDate).lte("data",endDate)
-        .not("codigo_especial","is",null),
-    ])
-    setAuxiliares(a ?? [])
-    setDoutores(d ?? [])
-    setEscalas(e ?? [])
-    setMensalEntries(m ?? [])
-    setTurnosData((t ?? []).map(x => ({ ...x, postos: (x.postos as string[] | null) ?? [] })))
-    setRestricoes(r ?? [])
-    setAusenciasEntries(abs ?? [])
-    setLoading(false)
+    try {
+      const [{ data:a },{ data:d },{ data:e },{ data:m },{ data:t },{ data:r },{ data:abs }] = await Promise.all([
+        supabase.from("auxiliares").select("id,nome,trabalha_fds").eq("disponivel",true).order("nome"),
+        supabase.from("doutores").select("id,nome").order("nome"),
+        supabase.from("escalas").select("id,data,posto,turno_letra,auxiliar_id,doutor_id")
+          .eq("tipo_escala","semanal")
+          .gte("data",startDate).lte("data",endDate)
+          .not("posto","is",null).not("turno_letra","is",null),
+        supabase.from("escalas").select("id,data,auxiliar_id,turno_id")
+          .eq("tipo_escala","mensal")
+          .gte("data",startDate).lte("data",endDate)
+          .not("turno_id","is",null),
+        supabase.from("turnos").select("id,nome,horario_inicio,horario_fim,postos"),
+        supabase.from("restricoes").select("id,auxiliar_id,turno_id,posto,motivo,data_inicio,data_fim"),
+        supabase.from("escalas").select("id,data,auxiliar_id,codigo_especial")
+          .eq("tipo_escala","mensal")
+          .gte("data",startDate).lte("data",endDate)
+          .not("codigo_especial","is",null),
+      ])
+      setAuxiliares(a ?? [])
+      setDoutores(d ?? [])
+      setEscalas(e ?? [])
+      setMensalEntries(m ?? [])
+      setTurnosData((t ?? []).map(x => ({ ...x, postos: (x.postos as string[] | null) ?? [] })))
+      setRestricoes(r ?? [])
+      setAusenciasEntries(abs ?? [])
+    } catch (err) {
+      console.error("Erro ao carregar dados da escala semanal:", err)
+      alert("Erro ao carregar dados. Verifique a ligação à internet e tente novamente.")
+    } finally {
+      setLoading(false)
+    }
   }
 
   // Refetch rápido só das entradas mensais (triggado pelo Realtime)
@@ -397,7 +399,7 @@ export default function EscalaSemanal() {
     turnoLetra: TurnoLetra,
     data: string
   ): string | null {
-    const cfg = loadCfg()
+    const cfg = horarios
     // Regra 1: Aux com turno N no dia anterior não pode fazer turno M no dia seguinte
     if (turnoLetra === "M") {
       const prevDate = format(addDays(parseISO(data), -1), "yyyy-MM-dd")
@@ -505,7 +507,7 @@ export default function EscalaSemanal() {
 
   function calcularAlertasSemanal(): AlertaSemanal[] {
     const alertas: AlertaSemanal[] = []
-    const cfg = loadCfg()
+    const cfg = horarios
 
     for (const data of weekDays.map(d => format(d, "yyyy-MM-dd"))) {
       const dayName = format(parseISO(data), "EEEE, d MMMM", { locale: ptBR })

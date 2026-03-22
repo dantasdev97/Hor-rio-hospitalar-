@@ -1,41 +1,43 @@
+import { useState, useRef } from "react"
 import { NavLink, useNavigate } from "react-router-dom"
 import {
-  CalendarDays,
-  Calendar,
-  Users,
-  Clock,
-  Stethoscope,
-  Settings,
-  X,
-  LogOut,
-  Link2,
-  Activity,
-  ChevronLeft,
-  ChevronRight,
+  CalendarDays, Calendar, Users, Clock, Stethoscope,
+  Settings, X, Hospital, LogOut, Link2, UserCircle2,
+  Phone, Hash, Upload, CheckCircle2, Loader2,
+  ChevronLeft, ChevronRight,
 } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { useAuth } from "@/contexts/AuthContext"
+import { useConfig } from "@/contexts/ConfigContext"
+import type { PerfilCoordenador } from "@/contexts/ConfigContext"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Separator } from "@/components/ui/separator"
 
-// ─── Navigation groups ─────────────────────────────────────────────────────────
+// ─── Nav groups ───────────────────────────────────────────────────────────────
+
 const navGroups = [
   {
-    label: "Escalas",
+    label: "Horários",
     items: [
       { to: "/escala-mensal",  label: "Escala Mensal",  icon: CalendarDays },
       { to: "/escala-semanal", label: "Escala Semanal", icon: Calendar },
     ],
   },
   {
-    label: "Equipa",
+    label: "Cadastro",
     items: [
-      { to: "/auxiliares", label: "Auxiliares", icon: Users },
       { to: "/doutores",   label: "Doutores",   icon: Stethoscope },
+      { to: "/auxiliares", label: "Auxiliares", icon: Users },
     ],
   },
   {
-    label: "Gestão",
+    label: "Gerenciamento",
     items: [
-      { to: "/turnos",       label: "Turnos",        icon: Clock },
-      { to: "/turno-postos", label: "Turnos → Postos", icon: Link2 },
+      { to: "/turnos",       label: "Turnos",          icon: Clock },
+      { to: "/turno-postos", label: "Turnos + Postos", icon: Link2 },
     ],
   },
   {
@@ -46,580 +48,338 @@ const navGroups = [
   },
 ]
 
-// ─── Props ─────────────────────────────────────────────────────────────────────
 interface SidebarProps {
   isOpen?: boolean
   onClose?: () => void
-  collapsed?: boolean
-  onToggleCollapse?: () => void
 }
 
-export default function Sidebar({
-  isOpen,
-  onClose,
-  collapsed = false,
-  onToggleCollapse,
-}: SidebarProps) {
+// ─── Modal perfil ─────────────────────────────────────────────────────────────
+
+function PerfilModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { user } = useAuth()
+  const { perfil, savePerfil } = useConfig()
+  const [form, setForm] = useState<PerfilCoordenador>(perfil)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const fotoRef = useRef<HTMLInputElement>(null)
+
+  const [lastOpen, setLastOpen] = useState(false)
+  if (open && !lastOpen) { setLastOpen(true); setForm(perfil); setSaved(false) }
+  if (!open && lastOpen) { setLastOpen(false) }
+
+  function update(key: keyof PerfilCoordenador, value: string | null) {
+    setForm((prev) => ({ ...prev, [key]: value }))
+    setSaved(false)
+  }
+
+  function handleFotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 200 * 1024) {
+      alert("A foto deve ter no máximo 200 KB.")
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => update("foto", reader.result as string)
+    reader.readAsDataURL(file)
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    await savePerfil(form)
+    setSaving(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  const initials = (form.nome || user?.email || "U").charAt(0).toUpperCase()
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-sm animate-in fade-in zoom-in-95 duration-200" aria-describedby={undefined}>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 animate-in slide-in-from-top-2 duration-300">
+            <UserCircle2 className="h-5 w-5 text-primary-600" />
+            Perfil do Coordenador
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-5 py-2">
+          <div className="flex flex-col items-center gap-3 animate-in slide-in-from-left duration-300 delay-100">
+            <div
+              onClick={() => fotoRef.current?.click()}
+              className="h-24 w-24 rounded-full border-2 border-dashed border-gray-200 flex items-center justify-center bg-gray-50 overflow-hidden cursor-pointer hover:border-primary-400 hover:bg-primary-50/40 hover:scale-105 transition-all duration-200 group"
+            >
+              {form.foto ? (
+                <img src={form.foto} alt="Foto" className="h-full w-full object-cover" />
+              ) : (
+                <span className="text-3xl font-bold text-gray-300 group-hover:text-primary-300 transition-colors">
+                  {initials}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => fotoRef.current?.click()}
+              className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-primary-600 transition-colors"
+            >
+              <Upload className="h-3 w-3" />
+              {form.foto ? "Alterar foto" : "Adicionar foto"}
+            </button>
+            <input ref={fotoRef} type="file" accept="image/*" className="hidden" onChange={handleFotoChange} />
+          </div>
+
+          <Separator />
+
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="perfil_nome" className="text-xs font-medium text-gray-600">Nome completo</Label>
+              <Input id="perfil_nome" value={form.nome} onChange={(e) => update("nome", e.target.value)} placeholder="Ex: Maria Silva" className="h-9" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-gray-600">Email</Label>
+              <Input value={user?.email ?? ""} readOnly disabled className="h-9 bg-gray-50 text-gray-500 cursor-not-allowed" />
+              <p className="text-[10px] text-gray-400">Definido pela conta de autenticação</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="perfil_tel" className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
+                <Phone className="h-3 w-3" /> Telemóvel
+              </Label>
+              <Input id="perfil_tel" value={form.telemovel} onChange={(e) => update("telemovel", e.target.value)} placeholder="Ex: 912 345 678" className="h-9" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="perfil_mec" className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
+                <Hash className="h-3 w-3" /> Nº mecanográfico
+              </Label>
+              <Input id="perfil_mec" value={form.numero_mecanografico} onChange={(e) => update("numero_mecanografico", e.target.value)} placeholder="Ex: 12345" className="h-9" />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="outline" onClick={onClose} size="sm">Fechar</Button>
+          <Button onClick={handleSave} disabled={saving} size="sm" className="min-w-[100px]">
+            {saving
+              ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> A guardar...</>
+              : saved
+              ? <><CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Guardado!</>
+              : "Guardar"
+            }
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ─── Sidebar ──────────────────────────────────────────────────────────────────
+
+export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { signOut, user } = useAuth()
+  const { empresa, perfil } = useConfig()
   const navigate = useNavigate()
+  const [perfilOpen, setPerfilOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
 
   async function handleSignOut() {
     await signOut()
     navigate("/login", { replace: true })
   }
 
-  const initial = user?.email?.charAt(0).toUpperCase() ?? "?"
+  const avatarInitial = (perfil.nome || user?.email || "U").charAt(0).toUpperCase()
 
   return (
     <>
       {/* Mobile overlay */}
-      <div
-        className={`sb-overlay ${isOpen ? "sb-overlay--on" : ""}`}
-        onClick={onClose}
-        aria-hidden
-      />
+      {isOpen && (
+        <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm md:hidden" onClick={onClose} />
+      )}
 
       {/* Sidebar */}
-      <aside className={`sb ${isOpen ? "sb--open" : ""} ${collapsed ? "sb--collapsed" : ""}`}>
-
-        {/* ── Header ── */}
-        <div className="sb-header">
-          <div className="sb-logo">
-            <div className="sb-logo-icon">
-              <Activity size={17} className="sb-logo-cross" />
+      <aside
+        className={cn(
+          "fixed top-0 left-0 z-50 h-full flex flex-col bg-white border-r border-gray-100 shadow-sm",
+          "transition-all duration-300 ease-in-out",
+          "md:translate-x-0 md:static md:z-auto",
+          collapsed ? "w-[68px]" : "w-64",
+          isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        )}
+      >
+        {/* ── Header ─────────────────────────────────────── */}
+        <div className={cn(
+          "flex items-center border-b border-gray-100 shrink-0 overflow-hidden",
+          collapsed ? "px-3 py-4 justify-center" : "px-4 py-4 justify-between"
+        )}>
+          {/* Logo + nome */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="h-8 w-8 rounded-lg bg-primary-50 border border-primary-100 flex items-center justify-center shrink-0 overflow-hidden">
+              {empresa.logo ? (
+                <img src={empresa.logo} alt="Logo" className="h-full w-full object-contain p-0.5" />
+              ) : (
+                <Hospital className="h-4.5 w-4.5 text-primary-600" />
+              )}
             </div>
+
             {!collapsed && (
-              <div className="sb-logo-text">
-                <span className="sb-logo-title">CHL</span>
-                <span className="sb-logo-sub">Imagiologia</span>
+              <div className="min-w-0 animate-in fade-in duration-200">
+                <p className="text-sm font-semibold text-gray-900 leading-none truncate">
+                  {empresa.nome.split(" ").slice(-1)[0] || "CHL"}
+                </p>
+                <p className="text-[10px] text-gray-400 leading-none mt-0.5 truncate">
+                  {empresa.departamento || "Imagiologia"}
+                </p>
               </div>
             )}
           </div>
 
-          <div className="sb-header-actions">
-            {/* Desktop collapse toggle */}
-            <button
-              onClick={onToggleCollapse}
-              className="sb-toggle-btn"
-              aria-label={collapsed ? "Expandir menu" : "Colapsar menu"}
-              title={collapsed ? "Expandir menu" : "Colapsar menu"}
-            >
-              {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-            </button>
-
-            {/* Mobile close */}
+          {/* Fechar (mobile) */}
+          {!collapsed && (
             <button
               onClick={onClose}
-              className="sb-close-btn"
-              aria-label="Fechar menu"
+              className="md:hidden h-7 w-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all shrink-0"
             >
-              <X size={17} />
+              <X className="h-4 w-4" />
             </button>
-          </div>
+          )}
         </div>
 
-        {/* ── Navigation ── */}
-        <nav className="sb-nav">
-          {navGroups.map((group, gi) => (
-            <div key={group.label} className="sb-group">
+        {/* ── Collapse toggle (desktop) ──────────────────── */}
+        <button
+          onClick={() => setCollapsed((v) => !v)}
+          title={collapsed ? "Expandir sidebar" : "Recolher sidebar"}
+          className={cn(
+            "hidden md:flex items-center justify-center",
+            "h-6 w-6 rounded-full bg-white border border-gray-200 shadow-sm",
+            "text-gray-400 hover:text-primary-600 hover:border-primary-300 hover:shadow-primary-100/50",
+            "transition-all duration-200 hover:scale-110",
+            "absolute -right-3 top-[52px] z-10"
+          )}
+        >
+          {collapsed
+            ? <ChevronRight className="h-3.5 w-3.5" />
+            : <ChevronLeft className="h-3.5 w-3.5" />
+          }
+        </button>
+
+        {/* ── Navigation ─────────────────────────────────── */}
+        <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3 px-2 space-y-4">
+          {navGroups.map(({ label, items }, gi) => (
+            <div key={label} className="space-y-0.5" style={{ animationDelay: `${gi * 60}ms` }}>
+              {/* Group label */}
               {!collapsed && (
-                <p className="sb-group-label">{group.label}</p>
+                <p className="px-3 mb-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-widest animate-in fade-in duration-200">
+                  {label}
+                </p>
               )}
-              <ul>
-                {group.items.map(({ to, label, icon: Icon }, ii) => (
-                  <li
-                    key={to}
-                    className="sb-item"
-                    style={{ animationDelay: `${(gi * 3 + ii) * 35}ms` }}
-                  >
-                    <NavLink
-                      to={to}
-                      onClick={onClose}
-                      title={collapsed ? label : undefined}
-                      className={({ isActive }) =>
-                        `sb-link ${isActive ? "sb-link--active" : ""}`
-                      }
-                    >
-                      <span className="sb-link-icon">
-                        <Icon size={16} />
-                      </span>
+              {collapsed && gi > 0 && (
+                <div className="w-6 mx-auto border-t border-gray-100 mb-1.5" />
+              )}
+
+              {items.map(({ to, label: itemLabel, icon: Icon }, ii) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  onClick={onClose}
+                  title={collapsed ? itemLabel : undefined}
+                  className={({ isActive }) =>
+                    cn(
+                      "flex items-center rounded-lg text-sm font-medium transition-all duration-150",
+                      "animate-in fade-in slide-in-from-left duration-300",
+                      collapsed ? "justify-center px-0 py-2.5 mx-0" : "gap-3 px-3 py-2.5",
+                      isActive
+                        ? "bg-primary-50 text-primary-700 border-l-[3px] border-primary-500 rounded-l-none"
+                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 border-l-[3px] border-transparent"
+                    )
+                  }
+                  style={{ animationDelay: `${gi * 60 + ii * 40}ms` }}
+                >
+                  {({ isActive }) => (
+                    <>
+                      <Icon className={cn(
+                        "h-[18px] w-[18px] shrink-0 transition-colors",
+                        isActive ? "text-primary-600" : "text-gray-400"
+                      )} />
                       {!collapsed && (
-                        <span className="sb-link-label">{label}</span>
+                        <span className="truncate">{itemLabel}</span>
                       )}
-                    </NavLink>
-                  </li>
-                ))}
-              </ul>
+                    </>
+                  )}
+                </NavLink>
+              ))}
             </div>
           ))}
         </nav>
 
-        {/* ── Footer ── */}
-        <div className="sb-footer">
+        {/* ── Footer ─────────────────────────────────────── */}
+        <div className={cn(
+          "border-t border-gray-100 shrink-0",
+          collapsed ? "p-2 space-y-1" : "p-3 space-y-1"
+        )}>
+          {/* Perfil do coordenador */}
           {user && (
-            <div className="sb-user" title={collapsed ? user.email : undefined}>
-              <div className="sb-user-avatar">{initial}</div>
+            <button
+              onClick={() => setPerfilOpen(true)}
+              title={collapsed ? (perfil.nome || user.email || "Perfil") : undefined}
+              className={cn(
+                "w-full flex items-center rounded-xl hover:bg-gray-50 transition-all duration-150 group",
+                collapsed ? "justify-center p-2" : "gap-2.5 px-2.5 py-2"
+              )}
+            >
+              {/* Avatar */}
+              <div className="h-8 w-8 rounded-full shrink-0 overflow-hidden ring-1 ring-gray-200 group-hover:ring-primary-300 transition-all">
+                {perfil.foto ? (
+                  <img src={perfil.foto} alt="Foto" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="h-full w-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
+                    <span className="text-xs font-bold text-white">{avatarInitial}</span>
+                  </div>
+                )}
+              </div>
+
               {!collapsed && (
-                <div className="sb-user-info">
-                  <span className="sb-user-role">Utilizador</span>
-                  <span className="sb-user-email">{user.email}</span>
+                <div className="flex-1 min-w-0 text-left animate-in fade-in duration-200">
+                  {perfil.nome ? (
+                    <>
+                      <p className="text-xs font-semibold text-gray-700 truncate leading-none group-hover:text-gray-900 transition-colors">
+                        {perfil.nome}
+                      </p>
+                      <p className="text-[10px] text-gray-400 truncate mt-0.5 group-hover:text-gray-500 transition-colors">
+                        {user.email}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-gray-500 truncate group-hover:text-gray-700 transition-colors">
+                      {user.email}
+                    </p>
+                  )}
                 </div>
               )}
-            </div>
+            </button>
           )}
 
+          {/* Logout */}
           <button
             onClick={handleSignOut}
-            className="sb-signout"
             title={collapsed ? "Terminar sessão" : undefined}
+            className={cn(
+              "w-full flex items-center rounded-xl text-sm font-medium",
+              "text-gray-400 hover:text-red-600 hover:bg-red-50 transition-all duration-150 group",
+              collapsed ? "justify-center p-2" : "gap-2.5 px-2.5 py-2"
+            )}
           >
-            <LogOut size={15} className="sb-signout-icon" />
-            {!collapsed && <span>Terminar sessão</span>}
+            <LogOut className="h-4 w-4 shrink-0" />
+            {!collapsed && <span className="animate-in fade-in duration-200">Terminar sessão</span>}
           </button>
 
+          {/* Version — só quando expandido */}
           {!collapsed && (
-            <p className="sb-version">CHL · Imagiologia · v1.0</p>
+            <p className="text-[9px] text-gray-300 text-center pt-0.5 tracking-wider uppercase animate-in fade-in duration-200">
+              {empresa.nome ? empresa.nome.split(" ").slice(-1)[0] : "CHL"} · v1.0
+            </p>
           )}
         </div>
       </aside>
 
-      {/* ─────────────────────── STYLES ─────────────────────── */}
-      <style>{`
-        /* ── Root ─────────────────────────────────────────── */
-        .sb {
-          position: fixed;
-          top: 0; left: 0;
-          z-index: 50;
-          height: 100%;
-          width: 260px;
-          display: flex;
-          flex-direction: column;
-          background: #ffffff;
-          border-right: 1px solid #e8ecf1;
-          box-shadow: 0 0 0 rgba(0,0,0,0);
-          /* mobile: hidden */
-          transform: translateX(-100%);
-          transition:
-            transform 0.3s cubic-bezier(0.16,1,0.3,1),
-            width     0.25s cubic-bezier(0.16,1,0.3,1),
-            box-shadow 0.3s ease;
-          overflow: hidden;
-        }
-
-        /* ── Desktop ─────────────────────────────────────── */
-        @media (min-width: 768px) {
-          .sb {
-            position: static;
-            transform: none !important;
-            z-index: auto;
-            box-shadow: none;
-            border-right: 1px solid #e8ecf1;
-            flex-shrink: 0;
-          }
-          .sb--collapsed {
-            width: 68px;
-          }
-        }
-
-        /* ── Mobile open ───────────────────────────────────── */
-        .sb--open {
-          transform: translateX(0) !important;
-          box-shadow: 6px 0 32px rgba(0,0,0,0.12);
-        }
-
-        /* ── Overlay ────────────────────────────────────────── */
-        .sb-overlay {
-          display: none;
-          position: fixed;
-          inset: 0;
-          z-index: 40;
-          background: rgba(0,0,0,0);
-          backdrop-filter: blur(0);
-          pointer-events: none;
-          transition: background 0.3s, backdrop-filter 0.3s;
-        }
-        @media (max-width: 767px) {
-          .sb-overlay { display: block; }
-          .sb-overlay--on {
-            background: rgba(15,25,45,0.45);
-            backdrop-filter: blur(3px);
-            pointer-events: all;
-          }
-        }
-
-        /* ── Header ─────────────────────────────────────────── */
-        .sb-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 0 0.875rem;
-          height: 60px;
-          border-bottom: 1px solid #f0f3f7;
-          flex-shrink: 0;
-          gap: 0.5rem;
-        }
-
-        .sb-logo {
-          display: flex;
-          align-items: center;
-          gap: 0.6rem;
-          min-width: 0;
-          flex: 1;
-        }
-
-        .sb-logo-icon {
-          width: 34px;
-          height: 34px;
-          border-radius: 9px;
-          background: linear-gradient(135deg, #0066b3, #0099cc);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          flex-shrink: 0;
-          box-shadow: 0 2px 8px rgba(0,102,179,0.3);
-          transition: box-shadow 0.25s, transform 0.25s;
-        }
-        .sb-logo-icon:hover {
-          box-shadow: 0 4px 14px rgba(0,102,179,0.4);
-          transform: scale(1.04);
-        }
-        .sb-logo-cross { color: #fff; }
-
-        .sb-logo-text {
-          display: flex;
-          flex-direction: column;
-          gap: 1px;
-          min-width: 0;
-          overflow: hidden;
-        }
-        .sb-logo-title {
-          font-size: 13.5px;
-          font-weight: 700;
-          color: #111827;
-          letter-spacing: 0.06em;
-          line-height: 1;
-          font-family: 'DM Sans', sans-serif;
-          white-space: nowrap;
-        }
-        .sb-logo-sub {
-          font-size: 10px;
-          color: #0099cc;
-          letter-spacing: 0.04em;
-          line-height: 1;
-          font-family: 'DM Sans', sans-serif;
-          white-space: nowrap;
-        }
-
-        .sb-header-actions {
-          display: flex;
-          align-items: center;
-          gap: 4px;
-          flex-shrink: 0;
-        }
-
-        /* Collapse toggle — desktop only */
-        .sb-toggle-btn {
-          display: none;
-          align-items: center;
-          justify-content: center;
-          width: 28px;
-          height: 28px;
-          border: 1px solid #e8ecf1;
-          border-radius: 7px;
-          background: #f8fafc;
-          color: #6b7280;
-          cursor: pointer;
-          transition: background 0.18s, color 0.18s, border-color 0.18s;
-          flex-shrink: 0;
-        }
-        .sb-toggle-btn:hover {
-          background: #eff6ff;
-          color: #0066b3;
-          border-color: #bfdbfe;
-        }
-        @media (min-width: 768px) {
-          .sb-toggle-btn { display: flex; }
-        }
-
-        /* Close btn — mobile only */
-        .sb-close-btn {
-          display: none;
-          align-items: center;
-          justify-content: center;
-          width: 28px;
-          height: 28px;
-          border: 1px solid #e8ecf1;
-          border-radius: 7px;
-          background: #f8fafc;
-          color: #6b7280;
-          cursor: pointer;
-          transition: background 0.18s, color 0.18s;
-        }
-        .sb-close-btn:hover {
-          background: #fee2e2;
-          color: #dc2626;
-        }
-        @media (max-width: 767px) {
-          .sb-close-btn { display: flex; }
-        }
-
-        /* ── Nav ─────────────────────────────────────────────── */
-        .sb-nav {
-          flex: 1;
-          overflow-y: auto;
-          overflow-x: hidden;
-          padding: 0.75rem 0.625rem;
-          scrollbar-width: thin;
-          scrollbar-color: #e5e7eb transparent;
-          display: flex;
-          flex-direction: column;
-          gap: 0.125rem;
-        }
-        .sb-nav::-webkit-scrollbar { width: 4px; }
-        .sb-nav::-webkit-scrollbar-track { background: transparent; }
-        .sb-nav::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 4px; }
-
-        .sb-group {
-          margin-bottom: 0.25rem;
-        }
-
-        .sb-group-label {
-          font-size: 10px;
-          font-weight: 600;
-          letter-spacing: 0.09em;
-          text-transform: uppercase;
-          color: #9ca3af;
-          padding: 0.4rem 0.6rem 0.3rem;
-          margin: 0;
-          white-space: nowrap;
-          overflow: hidden;
-          font-family: 'DM Sans', sans-serif;
-        }
-
-        .sb-group ul {
-          list-style: none;
-          margin: 0;
-          padding: 0;
-          display: flex;
-          flex-direction: column;
-          gap: 1px;
-        }
-
-        .sb-item {
-          animation: sbSlideIn 0.3s cubic-bezier(0.16,1,0.3,1) both;
-        }
-        @keyframes sbSlideIn {
-          from { opacity: 0; transform: translateX(-10px); }
-          to   { opacity: 1; transform: translateX(0); }
-        }
-
-        /* ── Links ───────────────────────────────────────────── */
-        .sb-link {
-          display: flex;
-          align-items: center;
-          gap: 0.625rem;
-          padding: 0.55rem 0.65rem;
-          border-radius: 8px;
-          text-decoration: none;
-          font-size: 13.5px;
-          font-weight: 500;
-          font-family: 'DM Sans', sans-serif;
-          color: #4b5563;
-          transition: background 0.15s, color 0.15s, transform 0.12s;
-          position: relative;
-          white-space: nowrap;
-          overflow: hidden;
-        }
-        .sb-link:hover {
-          background: #f0f7ff;
-          color: #0066b3;
-          transform: translateX(2px);
-        }
-        .sb-link:hover .sb-link-icon {
-          color: #0099cc;
-          transform: scale(1.08);
-        }
-
-        /* Collapsed: center icons */
-        .sb--collapsed .sb-link {
-          justify-content: center;
-          padding: 0.6rem;
-          gap: 0;
-        }
-        .sb--collapsed .sb-link:hover {
-          transform: scale(1.06);
-        }
-
-        /* Active */
-        .sb-link--active {
-          background: #eff6ff;
-          color: #0066b3;
-          font-weight: 600;
-        }
-        .sb-link--active::before {
-          content: '';
-          position: absolute;
-          left: 0; top: 18%; bottom: 18%;
-          width: 3px;
-          background: linear-gradient(180deg, #0099cc, #0066b3);
-          border-radius: 0 3px 3px 0;
-          box-shadow: 0 0 6px rgba(0,102,179,0.4);
-        }
-        .sb--collapsed .sb-link--active::before {
-          display: none;
-        }
-        .sb--collapsed .sb-link--active {
-          background: #eff6ff;
-          box-shadow: inset 0 0 0 1.5px #bfdbfe;
-        }
-        .sb-link--active .sb-link-icon {
-          color: #0066b3;
-        }
-        .sb-link--active:hover {
-          transform: none;
-        }
-
-        .sb-link-icon {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 20px;
-          height: 20px;
-          flex-shrink: 0;
-          color: #9ca3af;
-          transition: color 0.15s, transform 0.15s;
-        }
-        .sb-link-label {
-          flex: 1;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        /* Divider between groups (thin line) */
-        .sb-group + .sb-group {
-          border-top: 1px solid #f3f4f6;
-          padding-top: 0.25rem;
-          margin-top: 0.125rem;
-        }
-
-        /* ── Footer ──────────────────────────────────────────── */
-        .sb-footer {
-          padding: 0.75rem 0.625rem 0.875rem;
-          border-top: 1px solid #f0f3f7;
-          flex-shrink: 0;
-          display: flex;
-          flex-direction: column;
-          gap: 0.5rem;
-        }
-
-        .sb-user {
-          display: flex;
-          align-items: center;
-          gap: 0.6rem;
-          padding: 0.5rem 0.5rem;
-          border-radius: 8px;
-          background: #f8fafc;
-          border: 1px solid #f0f3f7;
-          transition: background 0.18s, border-color 0.18s;
-          cursor: default;
-          overflow: hidden;
-        }
-        .sb-user:hover {
-          background: #f0f7ff;
-          border-color: #dbeafe;
-        }
-        .sb--collapsed .sb-user {
-          justify-content: center;
-          padding: 0.5rem;
-        }
-
-        .sb-user-avatar {
-          width: 28px;
-          height: 28px;
-          border-radius: 7px;
-          background: linear-gradient(135deg, #0066b3, #0099cc);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 11px;
-          font-weight: 700;
-          color: #fff;
-          flex-shrink: 0;
-          font-family: 'DM Sans', sans-serif;
-          box-shadow: 0 1px 4px rgba(0,102,179,0.25);
-        }
-
-        .sb-user-info {
-          display: flex;
-          flex-direction: column;
-          gap: 1px;
-          min-width: 0;
-          overflow: hidden;
-        }
-        .sb-user-role {
-          font-size: 9.5px;
-          font-weight: 600;
-          letter-spacing: 0.07em;
-          text-transform: uppercase;
-          color: #0099cc;
-          font-family: 'DM Sans', sans-serif;
-          line-height: 1;
-        }
-        .sb-user-email {
-          font-size: 11px;
-          color: #6b7280;
-          font-family: 'DM Sans', sans-serif;
-          line-height: 1.35;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        .sb-signout {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          width: 100%;
-          padding: 0.5rem 0.65rem;
-          border: none;
-          border-radius: 8px;
-          background: transparent;
-          color: #9ca3af;
-          font-size: 13px;
-          font-weight: 500;
-          font-family: 'DM Sans', sans-serif;
-          cursor: pointer;
-          transition: background 0.18s, color 0.18s;
-          white-space: nowrap;
-          overflow: hidden;
-        }
-        .sb-signout:hover {
-          background: #fef2f2;
-          color: #dc2626;
-        }
-        .sb-signout:hover .sb-signout-icon {
-          color: #dc2626;
-        }
-        .sb--collapsed .sb-signout {
-          justify-content: center;
-          padding: 0.5rem;
-        }
-        .sb-signout-icon {
-          flex-shrink: 0;
-          transition: color 0.18s;
-        }
-
-        .sb-version {
-          font-size: 10px;
-          color: #d1d5db;
-          text-align: center;
-          margin: 0;
-          font-family: 'DM Sans', sans-serif;
-          letter-spacing: 0.04em;
-          white-space: nowrap;
-          overflow: hidden;
-        }
-      `}</style>
+      <PerfilModal open={perfilOpen} onClose={() => setPerfilOpen(false)} />
     </>
   )
 }
