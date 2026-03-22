@@ -75,6 +75,10 @@ function PerfilModal({ open, onClose }: { open: boolean; onClose: () => void }) 
   function handleFotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
+    if (file.size > 200 * 1024) {
+      alert("A foto deve ter no máximo 200 KB.")
+      return
+    }
     const reader = new FileReader()
     reader.onload = () => update("foto", reader.result as string)
     reader.readAsDataURL(file)

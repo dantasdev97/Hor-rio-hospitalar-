@@ -234,6 +234,10 @@ function TabEmpresa() {
   function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
+    if (file.size > 200 * 1024) {
+      alert("O logo deve ter no máximo 200 KB.")
+      return
+    }
     const reader = new FileReader()
     reader.onload = () => update("logo", reader.result as string)
     reader.readAsDataURL(file)

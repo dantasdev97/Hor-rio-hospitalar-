@@ -126,14 +126,14 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     setEmpresa(c)
     await supabase
       .from("configuracoes")
-      .upsert({ chave: "empresa", valor: c as unknown as Record<string, unknown>, updated_at: new Date().toISOString() })
+      .upsert({ chave: "empresa", valor: JSON.parse(JSON.stringify(c)), updated_at: new Date().toISOString() })
   }
 
   async function saveHorarios(c: HorariosConfig) {
     setHorarios(c)
     await supabase
       .from("configuracoes")
-      .upsert({ chave: "horarios", valor: c as unknown as Record<string, unknown>, updated_at: new Date().toISOString() })
+      .upsert({ chave: "horarios", valor: JSON.parse(JSON.stringify(c)), updated_at: new Date().toISOString() })
   }
 
   async function savePerfil(p: PerfilCoordenador) {
