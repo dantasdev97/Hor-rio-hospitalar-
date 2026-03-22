@@ -1,6 +1,6 @@
 ---
 tags: [todos, bugs, features, pendentes]
-updated: 2026-03-21
+updated: 2026-03-22
 ---
 
 # 24 — Pendentes e TODOs
@@ -50,7 +50,7 @@ updated: 2026-03-21
 ## 🔧 Melhorias Técnicas
 
 ### T1 — RLS Supabase para Produção
-- **Estado:** Pendente
+- **Estado:** Parcialmente resolvido (tabelas `configuracoes` e `perfil_coordenador` têm `allow_all` como as restantes)
 - **Prioridade:** Alta — segurança
 - **Descrição:** Todas as tabelas têm `allow_all`. Para produção real deve-se implementar políticas por `auth.uid()`
 - **O que fazer:**
@@ -101,6 +101,12 @@ updated: 2026-03-21
 | 2026-03-21 | Fix N5 → revertido a pedido |
 | 2026-03-21 | Notas Obsidian v1 criadas |
 | 2026-03-21 | Notas Obsidian v2 — análise profunda de todo o sistema |
+| 2026-03-22 | Configurações migradas para BD (tabelas `configuracoes` + `perfil_coordenador`) |
+| 2026-03-22 | ConfigContext criado — empresa, horários e perfil partilhados globalmente |
+| 2026-03-22 | Sidebar: logo dinâmica + modal de perfil do coordenador |
+| 2026-03-22 | EscalaMensal e EscalaSemanal usam `useConfig()` em vez de localStorage |
+| 2026-03-22 | Redesign visual das 3 tabs de Configurações (gradientes, ícones, layout polido) |
+| 2026-03-22 | **⚠️ Pendente:** Executar migração SQL no Supabase Dashboard (tabelas `configuracoes` + `perfil_coordenador`) |
 
 ---
 
