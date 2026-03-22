@@ -13,6 +13,7 @@ Lista de bugs identificados na análise profunda do sistema (2026-03-22).
 | `Promise.all` sem try/catch | Alto | `EscalaSemanal.tsx` | Adicionado try/catch + alert de erro |
 | Type casts `as unknown as Record` | Médio | `ConfigContext.tsx` | Substituído por `satisfies` |
 | Error parsing com `.includes()` | Baixo | `AuthContext.tsx` | Substituído por `error.status` e `error.code` |
+| Adicionar aux altera outras células | Alto | `EscalaSemanal.tsx` | Reverse sync filtrava mensal por aux+data sem turno — corrigido para filtrar por turno_id |
 
 ## Pendentes
 

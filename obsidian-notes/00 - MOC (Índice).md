@@ -49,6 +49,7 @@ updated: 2026-03-22
 - [[03-paginas/11 - Códigos Especiais]] — D, F, Fe, FAA, L, Aci
 - [[03-paginas/12 - Postos e Turnos]] — 8 postos, regras por dia/turno
 - [[03-paginas/13 - PDF e Exportação]] — jsPDF, print, WhatsApp, html2canvas
+- [[03-paginas/14 - Gerar Escala (Botão)]] — Lógica do botão, algoritmo coverage-first, 3 fases
 
 ### 04-componentes/
 - [[04-componentes/01 - AuxDrawer]] — Painel lateral, ausências, calendário

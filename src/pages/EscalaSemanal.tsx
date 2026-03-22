@@ -660,24 +660,28 @@ export default function EscalaSemanal() {
     else { const {data:rows,error}=await supabase.from("escalas").insert(payload).select("id"); if(!error&&rows?.length) savedId=rows[0].id }
 
     // ── Reverse sync: semanal override → upsert registo mensal correspondente ──
+    // IMPORTANTE: só faz match por aux + data + turno_id para não alterar
+    // entradas mensais de outros turnos (ex: aux no M não deve perder o M ao ser
+    // adicionado ao T).
     if (savedId && selCell.tipo === "auxiliar") {
       // 1.º: match exacto por posto + letra; 2.º: fallback por letra (ex: N5 sem postos configurados)
       const matchedTurno = turnosData.find(t =>
         t.postos.includes(selCell.posto) && turnoToLetra(t) === selCell.turnoLetra
       ) ?? turnosData.find(t => turnoToLetra(t) === selCell.turnoLetra)
       if (matchedTurno) {
-        const exMensal = mensalEntries.find(
-          m => m.auxiliar_id === selPersonId && m.data === selCell.data
+        // Procurar entrada mensal existente para este aux + data + MESMO turno
+        const exMensalSameTurno = mensalEntries.find(
+          m => m.auxiliar_id === selPersonId && m.data === selCell.data && m.turno_id === matchedTurno.id
         )
-        if (exMensal) {
-          await supabase.from("escalas").update({ turno_id: matchedTurno.id }).eq("id", exMensal.id)
-        } else {
+        if (!exMensalSameTurno) {
+          // Não existe entrada mensal para este turno específico — criar nova
+          // (não alterar entradas de outros turnos)
           await supabase.from("escalas").insert({
             auxiliar_id: selPersonId, data: selCell.data,
             tipo_escala: "mensal", turno_id: matchedTurno.id, status: "alocado"
           })
         }
-        // Actualiza estado local dos entries mensais para reflectir o sync imediatamente
+        // Se já existe para o mesmo turno, não precisa fazer nada
         await refetchMensalEntries()
       }
     }
@@ -708,9 +712,16 @@ export default function EscalaSemanal() {
       setEscalas(p => p.filter(e => !rows.some(r => r.id === e.id)))
       for (const row of rows) await supabase.from("escalas").delete().eq("id", row.id)
       // Also remove the mensal entries for any aux derived into this cell
+      // Match by turno_id to avoid deleting mensal entries from other turnos
+      const matchedTurno = turnosData.find(t =>
+        t.postos.includes(selCell.posto) && turnoToLetra(t) === selCell.turnoLetra
+      ) ?? turnosData.find(t => turnoToLetra(t) === selCell.turnoLetra)
       const derivedAuxIds = mensalAssignMap.get(`${selCell.data}|${selCell.turnoLetra}|${selCell.posto}`) ?? []
       for (const auxId of derivedAuxIds) {
-        const mensalEntry = mensalEntries.find(me => me.auxiliar_id === auxId && me.data === selCell.data)
+        const mensalEntry = mensalEntries.find(me =>
+          me.auxiliar_id === auxId && me.data === selCell.data &&
+          (!matchedTurno || me.turno_id === matchedTurno.id)
+        )
         if (mensalEntry) {
           await supabase.from("escalas").delete().eq("id", mensalEntry.id)
           setMensalEntries(p => p.filter(me => me.id !== mensalEntry.id))
@@ -724,10 +735,16 @@ export default function EscalaSemanal() {
       setEscalas(p=>p.filter(e=>e.id!==ex.id))
       const {error}=await supabase.from("escalas").delete().eq("id",ex.id)
       if(error) fetchAll()
-      // Also remove the corresponding mensal entry for this aux+date
+      // Also remove the corresponding mensal entry for this aux+date+turno
       const auxId = ex.auxiliar_id
       if (auxId) {
-        const mensalEntry = mensalEntries.find(me => me.auxiliar_id === auxId && me.data === selCell.data)
+        const clearTurno = turnosData.find(t =>
+          t.postos.includes(selCell.posto) && turnoToLetra(t) === selCell.turnoLetra
+        ) ?? turnosData.find(t => turnoToLetra(t) === selCell.turnoLetra)
+        const mensalEntry = mensalEntries.find(me =>
+          me.auxiliar_id === auxId && me.data === selCell.data &&
+          (!clearTurno || me.turno_id === clearTurno.id)
+        )
         if (mensalEntry) {
           await supabase.from("escalas").delete().eq("id", mensalEntry.id)
           setMensalEntries(p => p.filter(me => me.id !== mensalEntry.id))
@@ -737,14 +754,20 @@ export default function EscalaSemanal() {
   }
 
   // Remove a derivação do mensal apagando o registo mensal real
+  // Filtra por turno_id para não apagar entradas de outros turnos
   async function clearDerivedOverride() {
     if (!selCell) return
-    // Find the derived entry to get the aux id
     const ex = getEscala(selCell.data, selCell.turnoLetra, selCell.posto)
     const auxId = ex?.auxiliar_id
     closeDialog()
     if (auxId) {
-      const mensalEntry = mensalEntries.find(me => me.auxiliar_id === auxId && me.data === selCell.data)
+      const derivedTurno = turnosData.find(t =>
+        t.postos.includes(selCell.posto) && turnoToLetra(t) === selCell.turnoLetra
+      ) ?? turnosData.find(t => turnoToLetra(t) === selCell.turnoLetra)
+      const mensalEntry = mensalEntries.find(me =>
+        me.auxiliar_id === auxId && me.data === selCell.data &&
+        (!derivedTurno || me.turno_id === derivedTurno.id)
+      )
       if (mensalEntry) {
         await supabase.from("escalas").delete().eq("id", mensalEntry.id)
         setMensalEntries(p => p.filter(me => me.id !== mensalEntry.id))
