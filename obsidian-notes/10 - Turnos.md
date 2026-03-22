@@ -1,6 +1,6 @@
 ---
-tags: [turnos, shifts, cores, postos]
-updated: 2026-03-21
+tags: [turnos, shifts, cores, postos, classificação]
+updated: 2026-03-22
 ---
 
 # 10 — Turnos
@@ -11,21 +11,49 @@ updated: 2026-03-21
 ## 🎯 O Que Faz
 
 CRUD de turnos de trabalho. Define os turnos disponíveis no sistema com:
-- Código/nome (ex: M1, T2, N5, MT_TAC)
+- Código/nome (ex: M7, T21, N5, MT18)
 - Horário de início e fim
 - Cor personalizada para display
 - Postos de trabalho associados
+- **Badge visual M/T/N** — mostra em que célula da [[07 - Escala Semanal]] o turno cai
 
 ---
 
-## 🏷️ Classificação Automática de Turno
+## 🏷️ Classificação Automática de Turno (turnoParaLetra)
 
-| Condição | Letra | Tipo |
+Ver detalhes completos em [[26 - Classificação M-T-N por Horário]].
+
+```typescript
+function turnoParaLetra(t: { nome: string; horario_inicio: string }): string | null {
+  const n = t.nome.toUpperCase().trim()
+  const h = (t.horario_inicio ?? "").slice(0, 5)
+  if (n.startsWith("MT")) return "MT"
+  if (n.startsWith("N")) return "N"
+  if (h >= "20:00" || (h > "" && h < "06:00")) return "N"
+  if (h >= "06:00" && h < "14:00") return "M"
+  if (h >= "14:00" && h < "20:00") return "T"
+  if (n.startsWith("M")) return "M"
+  if (n.startsWith("T")) return "T"
+  return null
+}
+```
+
+| Resultado | Significado | Badge |
 |---|---|---|
-| `horario_inicio >= "20:00"` OU `nome.startsWith("N")` | N | Nocturno |
-| `nome.startsWith("M")` | M | Manhã |
-| `nome.startsWith("T")` | T | Tarde |
-| `nome.startsWith("MT")` | — | Especial (não classifica) |
+| `"M"` | Manhã | Verde `#C6EFCE` |
+| `"T"` | Tarde | Amarelo `#FFEB9C` |
+| `"N"` | Noite | Azul `#BDD7EE` |
+| `"MT"` | Misto | Ciano `#BAE6FD` |
+| `null` | Não classificado | — |
+
+```typescript
+const LETRA_STYLE = {
+  M:  { bg: "#C6EFCE", color: "#276221", label: "Manhã"  },
+  T:  { bg: "#FFEB9C", color: "#9C6500", label: "Tarde"  },
+  N:  { bg: "#BDD7EE", color: "#1F497D", label: "Noite"  },
+  MT: { bg: "#BAE6FD", color: "#0369A1", label: "Misto"  },
+}
+```
 
 ---
 
@@ -33,21 +61,21 @@ CRUD de turnos de trabalho. Define os turnos disponíveis no sistema com:
 
 O sistema tem 11 cores predefinidas para escolher no form:
 
-| Cor | Hex | Label |
-|---|---|---|
-| Azul | `#3B82F6` | Azul |
-| Verde | `#22C55E` | Verde |
-| Amarelo | `#EAB308` | Amarelo |
-| Rosa | `#EC4899` | Rosa |
-| Índigo | `#6366F1` | Índigo |
-| Laranja | `#F97316` | Laranja |
-| Vermelho | `#EF4444` | Vermelho |
-| Roxo | `#A855F7` | Roxo |
-| Ciano | `#06B6D4` | Ciano |
-| Lima | `#84CC16` | Lima |
-| Cinzento | `#6B7280` | Cinzento |
+| Cor | Hex |
+|---|---|
+| Azul | `#3B82F6` |
+| Verde | `#22C55E` |
+| Amarelo | `#EAB308` |
+| Rosa | `#EC4899` |
+| Índigo | `#6366F1` |
+| Laranja | `#F97316` |
+| Vermelho | `#EF4444` |
+| Roxo | `#A855F7` |
+| Ciano | `#06B6D4` |
+| Lima | `#84CC16` |
+| Cinzento | `#6B7280` |
 
-> Se `cor = null`, as cores são derivadas automaticamente por `deriveTurnoColor()` → ver [[06 - Escala Mensal]]
+> Se `cor = null`, cores derivadas automaticamente por `deriveTurnoColor()` — ver [[06 - Escala Mensal]]
 
 ---
 
@@ -102,17 +130,25 @@ supabase.from("turnos").delete().eq("id", id)
 
 ## 🖥️ UI
 
-- **Tabela:** Código (badge com cor), Horário (HH:MM), Postos (lista), Acções
-- **Dialog:**
-  - Campo: Código (texto obrigatório)
-  - Campos: Horário início + fim (grid 2 colunas)
-  - Selector de cor (paleta visual com preview)
-  - Checkboxes de postos (grid 2 colunas, 8 opções)
+### Tabela
+- **Código** — badge com cor do turno
+- **Horário** — HH:MM início → HH:MM fim
+- **Célula Semanal** — badge M/T/N/MT (verde/amarelo/azul/ciano) — novo
+- **Postos** — lista de postos associados
+- **Ações** — Editar / Apagar
+
+### Dialog
+- Campo: Código (obrigatório)
+- Campos: Horário início + fim (grid 2 colunas)
+- Selector de cor (paleta visual 11 cores com preview)
+- Checkboxes de postos (grid 2 colunas, 8 opções) — ver [[19 - Postos e Turnos]]
 
 ---
 
 ## 🔗 Ver Também
 
-- [[19 - Postos e Turnos]] — POSTOS disponíveis
-- [[07 - Escala Semanal]] — Como turnos são usados nos postos
+- [[26 - Classificação M-T-N por Horário]] — Lógica de `turnoParaLetra` e badges
+- [[19 - Postos e Turnos]] — POSTOS disponíveis e regras
+- [[07 - Escala Semanal]] — Como os turnos são usados nos postos
 - [[12 - VincularTurnoPosto]] — Interface alternativa de vinculação
+- [[05 - Tipos TypeScript]] — Interface Turno

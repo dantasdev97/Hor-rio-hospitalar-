@@ -1,6 +1,6 @@
 ---
-tags: [escala-mensal, geração, alertas, pdf]
-updated: 2026-03-21
+tags: [escala-mensal, geração, alertas, pdf, equipas]
+updated: 2026-03-22
 ---
 
 # 06 — Escala Mensal
@@ -11,9 +11,9 @@ updated: 2026-03-21
 ## 🎯 O Que Faz
 
 Página principal do sistema. Mostra a escala do mês completo num calendário tabular:
-- **Linhas:** auxiliares (ordenados por número mecanográfico)
+- **Linhas:** auxiliares **agrupados por equipa** (Equipa 1 / Equipa 2 / Equipa Transportes) — ver [[25 - Equipas de Auxiliares]]
 - **Colunas:** dias do mês
-- **Células:** turno atribuído ou código especial
+- **Células:** turno atribuído ou código especial ([[18 - Códigos Especiais]])
 
 ---
 
@@ -115,8 +115,11 @@ const channel = supabase.channel(`mensal-live-${year}-${month}`)
 
 ## 🔗 Ver Também
 
+- [[25 - Equipas de Auxiliares]] — Agrupamento por equipa (groupedAuxiliares)
 - [[16 - Algoritmo de Geração]] — Algoritmo coverage-first completo
 - [[17 - Sistema de Alertas]] — calcularAlertas() detalhado
 - [[20 - PDF e Exportação]] — exportPDF, printEscala, shareWA
 - [[18 - Códigos Especiais]] — D, F, Fe, FAA, L, Aci
 - [[21 - Configurações LocalStorage]] — cfg_horarios
+- [[07 - Escala Semanal]] — Sincronização bidirecional RT
+- [[08 - Auxiliares]] — Fonte dos auxiliares com campo equipa

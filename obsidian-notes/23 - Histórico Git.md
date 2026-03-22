@@ -1,6 +1,6 @@
 ---
 tags: [git, histórico, commits, desenvolvimento]
-updated: 2026-03-21
+updated: 2026-03-22
 ---
 
 # 23 — Histórico Git
@@ -23,7 +23,6 @@ updated: 2026-03-21
 ```
 d769b83  feat: implementação completa do sistema de gestão de horários hospitalares
 ```
-Implementação inicial completa.
 
 ### Fase 2 — CRUD e Restrições
 ```
@@ -81,12 +80,26 @@ e8f1e04  fix(alertas): corrigir deteção de turno N5 e melhorar alertas de carg
 29206c8  Revert "fix(alertas): corrigir deteção de turno N5 e melhorar alertas de carga"
 ```
 
-> ⚠️ `e8f1e04` foi revertido a pedido (bug N5 na detecção de noturno — ver [[24 - Pendentes e TODOs]])
+> ⚠️ `e8f1e04` revertido a pedido — ver [[24 - Pendentes e TODOs]] bug B1
 
 ### Fase 8 — Documentação
 ```
 a1ccd14  docs: adicionar notas Obsidian com contexto completo do projecto
 ```
+
+### Fase 9 — Equipas, Classificação M/T/N, Fix Multi-Pessoa (2026-03-22)
+```
+[hash]  feat: adicionar campo equipa aos auxiliares + migração SQL
+[hash]  feat: agrupamento por equipa na escala mensal (groupedAuxiliares)
+[hash]  feat: badge visual M/T/N em Turnos e VincularTurnoPosto (turnoParaLetra melhorado)
+[hash]  fix: corrigir limpeza e troca de aux em células multi-pessoa (ECO URG / EXAM1)
+[hash]  docs: actualizar notas Obsidian — fases 9, novos links, notas 25/26/27
+```
+
+Funcionalidades desta fase:
+- [[25 - Equipas de Auxiliares]] — Campo `equipa` + agrupamento na [[06 - Escala Mensal]]
+- [[26 - Classificação M-T-N por Horário]] — `turnoToLetra` melhorado + badges visuais
+- [[27 - Fix ECO URG Multi-Pessoa]] — Fix limpeza/troca de aux em EXAM1/TRANSPORT
 
 ---
 

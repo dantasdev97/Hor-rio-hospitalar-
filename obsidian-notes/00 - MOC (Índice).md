@@ -1,6 +1,6 @@
 ---
 tags: [moc, índice, projeto]
-updated: 2026-03-21
+updated: 2026-03-22
 ---
 
 # 🗺️ Horário Hospitalar — Mapa do Conhecimento
@@ -18,7 +18,7 @@ updated: 2026-03-21
 | **Deploy** | Vercel — branch `main` |
 | **Branch dev** | `claude/fix-auxdrawer-duplicate-property-Wtf9X` |
 | **Supabase** | RLS allow_all (modo dev) |
-| **Último commit** | `a1ccd14` — docs: adicionar notas Obsidian |
+| **Último commit** | `46ecd6c` — fix: corrigir limpeza ECO URG células multi-pessoa |
 
 ---
 
@@ -36,11 +36,11 @@ updated: 2026-03-21
 ### 📄 Páginas
 - [[06 - Escala Mensal]] — Motor principal, geração automática, alertas
 - [[07 - Escala Semanal]] — Vista por postos, sincronização, regras
-- [[08 - Auxiliares]] — CRUD, disponibilidade, FDS
+- [[08 - Auxiliares]] — CRUD, disponibilidade, FDS, equipas
 - [[09 - Doutores]] — CRUD, associação de turnos
-- [[10 - Turnos]] — CRUD, cores, postos associados
+- [[10 - Turnos]] — CRUD, cores, postos associados, badge M/T/N
 - [[11 - Restrições]] — Tipos, lógica, datas
-- [[12 - VincularTurnoPosto]] — Matriz turno × posto
+- [[12 - VincularTurnoPosto]] — Matriz turno × posto, badge M/T/N
 - [[13 - Configurações]] — LocalStorage, validações, empresa
 
 ### 🧩 Componentes & Lógica
@@ -49,7 +49,7 @@ updated: 2026-03-21
 - [[16 - Algoritmo de Geração]] — Coverage-first, distribuição justa
 - [[17 - Sistema de Alertas]] — 7 categorias, gravidade, UI colapsável
 - [[18 - Códigos Especiais]] — D, F, Fe, FAA, L, Aci
-- [[19 - Postos e Turnos]] — 8 postos, regras por dia/turno
+- [[19 - Postos e Turnos]] — 8 postos, regras por dia/turno, multi-pessoa
 
 ### 📤 Exportação
 - [[20 - PDF e Exportação]] — jsPDF, print, WhatsApp, html2canvas
@@ -61,6 +61,11 @@ updated: 2026-03-21
 
 ### 📋 Trabalho Pendente
 - [[24 - Pendentes e TODOs]] — Bugs, features, melhorias técnicas
+
+### 🆕 Features Recentes (2026-03-22)
+- [[25 - Equipas de Auxiliares]] — Campo equipa, agrupamento na escala mensal
+- [[26 - Classificação M-T-N por Horário]] — `turnoToLetra` melhorado, badges visuais
+- [[27 - Fix ECO URG Multi-Pessoa]] — Limpeza e troca de aux em células EXAM1/TRANSPORT
 
 ---
 
@@ -77,11 +82,24 @@ updated: 2026-03-21
 ```
 Login → Escala Mensal ← → Escala Semanal
          ↓                      ↓
-    Gerar Escala          Editar por Posto
-    Alertas               Sincronização RT
-    PDF/Print/WA          PDF/Print/WA
+    Equipas (1, 2, TR)     Postos M/T/N
+    Gerar Escala           Editar por Posto
+    Alertas                Sincronização RT
+    PDF/Print/WA           PDF/Print/WA
          ↓
     AuxDrawer (ausências)
     Restrições
     Configurações
+```
+
+---
+
+## 🔗 Mapa de Dependências (principais)
+
+```
+Auxiliares ──equipa──→ Escala Mensal (grupos)
+Turnos ─────postos───→ Escala Semanal (células M/T/N)
+Escala Mensal ←──── sync RT ────→ Escala Semanal
+Restrições ──────────────────────→ Escala Semanal (bloqueios)
+AuxDrawer ←──────────────────────  Auxiliares (click nome)
 ```

@@ -1,6 +1,6 @@
 ---
 tags: [todos, bugs, features, pendentes]
-updated: 2026-03-21
+updated: 2026-03-22
 ---
 
 # 24 — Pendentes e TODOs
@@ -9,17 +9,30 @@ updated: 2026-03-21
 
 ## 🐛 Bugs Conhecidos
 
-### B1 — Turno N5 não detectado como noturno
-- **Estado:** Corrigido no commit `e8f1e04`, **revertido** a pedido no `29206c8`
-- **Problema:** O turno "N5" não era reconhecido como nocturno pela função `isNoturnoTurno()`
-- **Fix aplicado (revertido):** Adicionar check `nome.startsWith("N")` explícito para N5
-- **Causa do revert:** O utilizador pediu reverter (pode ter causado outro comportamento)
-- **Prioridade:** Alta — afecta a geração automática de D+F e os alertas de cobertura
+### B1 — Turno N5 não detectado como noturno ⚠️ PARCIALMENTE CORRIGIDO
+- **Estado:** Fix `e8f1e04` revertido; mas [[26 - Classificação M-T-N por Horário]] resolve pelo `horario_inicio`
+- **Situação actual:** `turnoToLetra` usa `horario_inicio` como primário — se N5 tiver `horario_inicio >= "20:00"`, é classificado correctamente como N sem depender do prefixo
+- **Risco residual:** Se o N5 estiver configurado com horário < 20:00 no Supabase, pode ainda falhar
+- **Prioridade:** Média — verificar configuração do horário do N5 na DB
 
 ### B2 — Cowork não funciona
 - **Estado:** Não investigado
-- **Problema:** Funcionalidade de "cowork" está referenciada mas não funciona
-- **Prioridade:** Baixa — não é funcionalidade crítica
+- **Prioridade:** Baixa
+
+---
+
+## ✅ Corrigido Recentemente (2026-03-22)
+
+### C1 — ECO URG (EXAM1) células multi-pessoa não limpavam ✅
+- **Corrigido em:** [[27 - Fix ECO URG Multi-Pessoa]]
+- `clearEscala` agora apaga também entradas mensais derivadas
+- `hasExisting` detecta derivações mensais (IDs `"mensal_*"`)
+- `saveEscala` com seleção vazia delega para `clearEscala`
+
+### C2 — Badge M/T/N ausente em Turnos e VincularTurnoPosto ✅
+- **Corrigido em:** [[26 - Classificação M-T-N por Horário]]
+- Coluna "Célula Semanal" adicionada à tabela de [[10 - Turnos]]
+- Coluna "Célula" adicionada à matriz [[12 - VincularTurnoPosto]]
 
 ---
 
@@ -27,22 +40,17 @@ updated: 2026-03-21
 
 ### F1 — Deteção de Cobertura para Todos os Postos
 - **Estado:** Pendente
-- **Descrição:** O alerta de cobertura (categoria B) apenas verifica N (RX URG + TAC2).
-  EXAM1 tem verificação parcial (categoria C).
-  Os outros 5 postos (TAC1, EXAM2, SALA6, SALA7, TRANSPORT) não têm verificação.
+- **Descrição:** Alerta de cobertura (cat. B) só verifica N (RX URG + TAC2). EXAM1 tem verificação parcial. Os outros 5 postos sem verificação.
 - **Prioridade:** Média
+- **Ver:** [[17 - Sistema de Alertas]]
 
 ### F2 — Alerta de Excesso na Escala Semanal
 - **Estado:** Pendente
-- **Descrição:** Detectar quando há auxiliares em excesso na escala semanal (mais do que o máximo para um posto)
 - **Prioridade:** Baixa
 
 ### F3 — Mínimo de Turnos Configurável
 - **Estado:** Pendente
-- **Descrição:** O valor mínimo de 15 turnos/mês (alerta G - subcarregado) está hard-coded.
-  Deveria ser uma configuração em `cfg_horarios`.
-- **Localização:** `calcularAlertas()` em EscalaMensal.tsx
-- **Fix simples:** Adicionar `minTurnosMes: 15` ao `DEFAULT_CFG` e `HorariosConfig`
+- **Fix simples:** Adicionar `minTurnosMes: 15` ao `DEFAULT_CFG` em [[21 - Configurações LocalStorage]]
 - **Prioridade:** Baixa
 
 ---
@@ -50,46 +58,26 @@ updated: 2026-03-21
 ## 🔧 Melhorias Técnicas
 
 ### T1 — RLS Supabase para Produção
-- **Estado:** Pendente
-- **Prioridade:** Alta — segurança
-- **Descrição:** Todas as tabelas têm `allow_all`. Para produção real deve-se implementar políticas por `auth.uid()`
-- **O que fazer:**
-  ```sql
-  -- Exemplo para auxiliares
-  CREATE POLICY "Users can see own data" ON auxiliares
-  FOR ALL USING (auth.uid() IS NOT NULL);
-  ```
+- **Estado:** Pendente — **ALTA PRIORIDADE** para produção real
+- Ver [[04 - Base de Dados]] — políticas RLS
 
 ### T2 — Linguagem PT-PT Consistente
 - **Estado:** Pendente
 - **Prioridade:** Baixa
-- **Descrição:** Alguns textos ainda usam português do Brasil (ex: "cadastrado" em vez de "registado", "você" em vez de "você/tu")
-- **Exemplos encontrados:** mensagens de validação Zod, alguns toasts
 
 ### T3 — Campos Null em horario_inicio/horario_fim
 - **Estado:** Pendente
+- Pode crashar modal de edição de célula na [[07 - Escala Semanal]]
 - **Prioridade:** Média
-- **Descrição:** O modal de edição de célula pode crashar se `horario_inicio` ou `horario_fim` forem null no objecto Turno
-- **Fix:** Adicionar null-check em `restHoursBetween()` e nas funções de display
 
 ---
 
 ## 💡 Ideias Futuras
 
 ### I1 — Gestão de Férias Anuais
-- Calendário de férias com slots por mês
-- Verificação automática de cobertura durante férias
-
-### I2 — Relatórios / Dashboard
-- Total de horas por auxiliar por mês
-- Gráfico de distribuição de turnos
-
-### I3 — Sistema de Notificações
-- Email/SMS quando escala é gerada
-- Aviso ao auxiliar quando tem turno nocturno
-
+### I2 — Relatórios / Dashboard de horas por auxiliar
+### I3 — Notificações Email/SMS
 ### I4 — Exportação para Excel
-- Alternativa ao PDF para edição posterior
 
 ---
 
@@ -97,10 +85,14 @@ updated: 2026-03-21
 
 | Data | O Que Foi Feito |
 |---|---|
-| 2026-03-21 | Sistema de alertas dinâmico implementado |
+| 2026-03-21 | [[17 - Sistema de Alertas\|Sistema de alertas]] dinâmico implementado |
 | 2026-03-21 | Fix N5 → revertido a pedido |
 | 2026-03-21 | Notas Obsidian v1 criadas |
 | 2026-03-21 | Notas Obsidian v2 — análise profunda de todo o sistema |
+| 2026-03-22 | [[25 - Equipas de Auxiliares\|Campo equipa]] adicionado aos auxiliares + agrupamento [[06 - Escala Mensal\|escala mensal]] |
+| 2026-03-22 | [[26 - Classificação M-T-N por Horário\|Badge M/T/N]] em [[10 - Turnos\|Turnos]] e [[12 - VincularTurnoPosto\|VincularTurnoPosto]] |
+| 2026-03-22 | [[27 - Fix ECO URG Multi-Pessoa\|Fix ECO URG]] — limpeza de células multi-pessoa |
+| 2026-03-22 | Notas Obsidian v3 — links completos, 3 novas notas (25/26/27) |
 
 ---
 
@@ -109,3 +101,6 @@ updated: 2026-03-21
 - [[17 - Sistema de Alertas]] — Estado actual dos alertas
 - [[16 - Algoritmo de Geração]] — Estado da geração automática
 - [[23 - Histórico Git]] — Commits relacionados
+- [[25 - Equipas de Auxiliares]] — Feature de equipas (concluída)
+- [[26 - Classificação M-T-N por Horário]] — Fix classificação (concluído)
+- [[27 - Fix ECO URG Multi-Pessoa]] — Fix multi-pessoa (concluído)

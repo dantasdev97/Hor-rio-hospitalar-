@@ -1,6 +1,6 @@
 ---
 tags: [typescript, interfaces, tipos]
-updated: 2026-03-21
+updated: 2026-03-22
 ---
 
 # 05 — Tipos TypeScript
@@ -22,16 +22,19 @@ export interface Auxiliar {
   contribuinte: string | null           // NIF
   disponivel: boolean                   // Activo no sistema
   trabalha_fds: boolean                 // Trabalha fins de semana
+  equipa: 'Equipa 1' | 'Equipa 2' | 'Equipa Transportes' | null  // ← [[25 - Equipas de Auxiliares]]
   created_at: string
 }
 ```
+
+> Campo `equipa` adicionado em 2026-03-22. Migração: `20260321_add_equipa_to_auxiliares.sql` — ver [[04 - Base de Dados]]
 
 ### `Ausencia`
 ```typescript
 export interface Ausencia {
   id: string
   auxiliar_id: string
-  codigo: string           // D | F | Fe | FAA | L | Aci
+  codigo: string           // D | F | Fe | FAA | L | Aci — ver [[18 - Códigos Especiais]]
   data_inicio: string      // YYYY-MM-DD
   data_fim: string         // YYYY-MM-DD
   created_at: string
@@ -52,14 +55,16 @@ export interface Doutor {
 ```typescript
 export interface Turno {
   id: string
-  nome: string              // Ex: "M1", "T2", "N5", "MT_TAC"
-  horario_inicio: string    // "HH:MM:SS" — hora de início
-  horario_fim: string       // "HH:MM:SS" — hora de fim
-  cor: string | null        // Cor hex personalizada (#RRGGBB)
-  postos: string[]          // Postos associados: ["RX_URG", "TAC2"]
+  nome: string              // Ex: "M7", "T21", "N5", "MT18"
+  horario_inicio: string    // "HH:MM:SS" — usado para classificar M/T/N
+  horario_fim: string       // "HH:MM:SS"
+  cor: string | null        // Cor hex (#RRGGBB)
+  postos: string[]          // Ex: ["RX_URG", "TAC2"] — ver [[19 - Postos e Turnos]]
   created_at: string
 }
 ```
+
+> Classificação M/T/N feita por `turnoToLetra()` — ver [[26 - Classificação M-T-N por Horário]]
 
 ### `DoutorTurno`
 ```typescript
@@ -67,7 +72,7 @@ export interface DoutorTurno {
   id: string
   doutor_id: string
   turno_id: string
-  turno?: Turno             // Relação carregada opcionalmente
+  turno?: Turno
 }
 ```
 
@@ -80,9 +85,9 @@ export interface Escala {
   turno_id: string | null
   auxiliar_id: string | null
   status: 'disponivel' | 'alocado' | 'bloqueado'
-  codigo_especial: string | null          // D | F | Fe | FAA | L | Aci
-  turno?: Turno                           // Relação opcional
-  auxiliar?: Auxiliar                     // Relação opcional
+  codigo_especial: string | null          // ver [[18 - Códigos Especiais]]
+  turno?: Turno
+  auxiliar?: Auxiliar
 }
 ```
 
@@ -94,8 +99,8 @@ export interface Restricao {
   turno_id: string | null    // null = restrição só por posto
   posto: string | null       // null = restrição só por turno
   motivo: string | null
-  data_inicio: string | null // null = sem limite de início
-  data_fim: string | null    // null = sem limite de fim
+  data_inicio: string | null
+  data_fim: string | null
 }
 ```
 
@@ -103,44 +108,47 @@ export interface Restricao {
 
 ## 🏷️ Tipos Locais (definidos nas páginas)
 
-### `EscalaRow` (usado em EscalaMensal e EscalaSemanal)
+### `EscalaRow` (EscalaMensal e EscalaSemanal)
 ```typescript
-// Versão simplificada da Escala para uso interno nas páginas
 type EscalaRow = {
-  id: string
+  id: string           // "mensal_XXXX" = derivado virtual; UUID = real na DB
   data: string
   auxiliar_id: string | null
   doutor_id?: string | null
   turno_id: string | null
   codigo_especial: string | null
   posto?: string | null
-  turno_letra?: string | null
+  turno_letra?: string | null   // "M" | "T" | "N"
 }
 ```
+
+> IDs `"mensal_*"` são virtuais — ver [[27 - Fix ECO URG Multi-Pessoa]] para impacto nas operações de limpeza.
+
+### `TurnoLetra` (EscalaSemanal, Restricoes)
+```typescript
+type TurnoLetra = 'M' | 'T' | 'N'
+```
+
+> Determinada por `turnoToLetra()` — ver [[26 - Classificação M-T-N por Horário]]
 
 ### `AlertaMensal` (EscalaMensal)
 ```typescript
 type AlertaMensal = {
-  id: string          // Unique key para tracking de resoluções
+  id: string
   tipo: 'erro' | 'aviso' | 'info'
   categoria: 'ausencia' | 'cobertura' | 'descanso' | 'excesso'
   mensagem: string
-  dia?: number        // Dia do mês onde ocorre
-  auxNome?: string    // Nome do auxiliar envolvido
+  dia?: number
+  auxNome?: string
 }
 ```
 
 ### `UndoState` (EscalaMensal e EscalaSemanal)
 ```typescript
 type UndoState = {
-  inserted: string[]    // IDs inseridos (para apagar no undo)
-  deleted: EscalaRow[]  // Registos apagados (para re-inserir no undo)
+  inserted: string[]
+  deleted: EscalaRow[]
 } | null
-```
-
-### `TurnoLetra` (EscalaSemanal)
-```typescript
-type TurnoLetra = 'M' | 'T' | 'N'
 ```
 
 ### `TurnoComPostos` (EscalaSemanal)
@@ -150,22 +158,21 @@ type TurnoComPostos = Turno & { postos: string[] }
 
 ### `Person` (EscalaSemanal)
 ```typescript
-type Person = {
-  id: string
-  nome: string
-  trabalha_fds?: boolean
-}
+type Person = { id: string; nome: string; trabalha_fds?: boolean }
 ```
 
 ### `MensalEntry` (EscalaSemanal)
 ```typescript
-type MensalEntry = {
-  id: string
-  data: string
-  auxiliar_id: string
-  turno_id: string
-}
+type MensalEntry = { id: string; data: string; auxiliar_id: string; turno_id: string }
 ```
+
+### `EquipaType` (Auxiliares.tsx — local)
+```typescript
+const EQUIPAS = ['Equipa 1', 'Equipa 2', 'Equipa Transportes'] as const
+type EquipaType = typeof EQUIPAS[number]
+```
+
+> Ver [[25 - Equipas de Auxiliares]]
 
 ---
 
@@ -174,3 +181,6 @@ type MensalEntry = {
 - [[04 - Base de Dados]] — Schema SQL correspondente
 - [[18 - Códigos Especiais]] — Valores de `codigo_especial`
 - [[19 - Postos e Turnos]] — Valores de `posto` e `turno_letra`
+- [[25 - Equipas de Auxiliares]] — Campo `equipa` no interface Auxiliar
+- [[26 - Classificação M-T-N por Horário]] — Como `TurnoLetra` é determinada
+- [[27 - Fix ECO URG Multi-Pessoa]] — IDs "mensal_" e limpeza de células

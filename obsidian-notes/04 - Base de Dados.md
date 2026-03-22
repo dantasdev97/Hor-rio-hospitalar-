@@ -1,6 +1,6 @@
 ---
-tags: [base-de-dados, supabase, schema, sql]
-updated: 2026-03-21
+tags: [base-de-dados, supabase, schema, sql, equipas]
+updated: 2026-03-22
 ---
 
 # 04 — Base de Dados (Supabase)
@@ -33,7 +33,11 @@ updated: 2026-03-21
 | `contribuinte` | text | nullable | — |
 | `disponivel` | boolean | — | true |
 | `trabalha_fds` | boolean | — | (implícito no código) |
+| `equipa` | text | CHECK IN ('Equipa 1','Equipa 2','Equipa Transportes'), nullable | — |
 | `created_at` | timestamptz | — | now() |
+
+> Campo `equipa` adicionado em 2026-03-22. Migração: `20260321_add_equipa_to_auxiliares.sql`
+> Ver [[25 - Equipas de Auxiliares]] — agrupamento na [[06 - Escala Mensal]]
 
 ### `doutores`
 | Coluna | Tipo | Constraint | Default |
@@ -135,8 +139,9 @@ CREATE POLICY "allow_all" ON tabela FOR ALL USING (true);
 
 ```
 supabase/migrations/
-├── 20260308_create_hospital_tables.sql  ← Criação inicial de todas as tabelas
-└── 20260316_add_postos_to_turnos.sql    ← ALTER TABLE turnos ADD COLUMN postos text[]
+├── 20260308_create_hospital_tables.sql       ← Criação inicial de todas as tabelas
+├── 20260316_add_postos_to_turnos.sql         ← ALTER TABLE turnos ADD COLUMN postos text[]
+└── 20260321_add_equipa_to_auxiliares.sql     ← ALTER TABLE auxiliares ADD COLUMN equipa text CHECK(...)
 ```
 
 ---
@@ -158,3 +163,6 @@ Estes campos foram adicionados ao longo do desenvolvimento. Verificar se estão 
 - [[05 - Tipos TypeScript]] — Interfaces TypeScript correspondentes
 - [[18 - Códigos Especiais]] — Valores possíveis de `codigo_especial`
 - [[19 - Postos e Turnos]] — Valores possíveis de `posto` e `turno_letra`
+- [[25 - Equipas de Auxiliares]] — Campo equipa na tabela auxiliares
+- [[08 - Auxiliares]] — CRUD e modal de edição
+- [[11 - Restrições]] — Tabela restricoes

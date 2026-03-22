@@ -1,6 +1,6 @@
 ---
-tags: [escala-semanal, postos, sincronização]
-updated: 2026-03-21
+tags: [escala-semanal, postos, sincronização, multi-pessoa, classificação]
+updated: 2026-03-22
 ---
 
 # 07 — Escala Semanal
@@ -150,7 +150,11 @@ EscalaMensal reflecte a alteração
 
 ## 🔗 Ver Também
 
-- [[19 - Postos e Turnos]] — POSTOS, POSTO_SCHEDULE, regras
-- [[11 - Restrições]] — Lógica de restrições
+- [[19 - Postos e Turnos]] — POSTOS, POSTO_SCHEDULE, regras, multi-pessoa
+- [[26 - Classificação M-T-N por Horário]] — turnoToLetra() e lógica de células M/T/N
+- [[27 - Fix ECO URG Multi-Pessoa]] — Fix limpeza/troca EXAM1 e TRANSPORT derivados
+- [[11 - Restrições]] — Lógica de restrições e verificação
+- [[06 - Escala Mensal]] — Fonte das entradas mensais derivadas (mensalAssignMap)
+- [[09 - Doutores]] — Doutores nas células EXAM1+N e EXAM2+N
 - [[20 - PDF e Exportação]] — PDF semanal
 - [[21 - Configurações LocalStorage]] — bloquearTurnosConsecutivos, alertasConflito

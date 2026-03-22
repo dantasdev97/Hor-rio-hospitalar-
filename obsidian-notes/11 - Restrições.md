@@ -1,6 +1,6 @@
 ---
-tags: [restrições, restrictions, bloqueios]
-updated: 2026-03-21
+tags: [restrições, restrictions, bloqueios, classificação]
+updated: 2026-03-22
 ---
 
 # 11 — Restrições
@@ -10,48 +10,74 @@ updated: 2026-03-21
 
 ## 🎯 O Que Faz
 
-Gestão de restrições por auxiliar. Uma restrição impede que um auxiliar seja escalado num determinado turno, posto, ou combinação, num período de datas definido.
+Define restrições que impedem um [[08 - Auxiliares|auxiliar]] de trabalhar num determinado [[10 - Turnos|turno]] e/ou [[19 - Postos e Turnos|posto]].
+
+Tipos de restrição:
+- **Por turno** — aux não pode fazer o turno X
+- **Por posto** — aux não pode trabalhar no posto Y
+- **Combinada** — aux não pode fazer turno X no posto Y
+- **Temporizada** — só activa entre `data_inicio` e `data_fim`
 
 ---
 
-## 📋 Tipos de Restrição
+## 📦 Estado
 
-| Tipo | `turno_id` | `posto` | Comportamento |
-|---|---|---|---|
-| **Só por turno** | ✅ preenchido | null | Auxiliar não pode fazer aquele turno |
-| **Só por posto** | null | ✅ preenchido | Auxiliar não pode ir a aquele posto |
-| **Combinada** | ✅ | ✅ | Auxiliar não pode fazer aquele turno naquele posto |
-
----
-
-## 📅 Restrições Temporárias vs Permanentes
-
-| Campo | null | Preenchido |
+| State | Tipo | Propósito |
 |---|---|---|
-| `data_inicio` | Sem limite de início | Começa nesta data |
-| `data_fim` | Sem limite de fim | Termina nesta data |
+| `restricoes` | Restricao[] | Lista completa |
+| `auxiliares` | Auxiliar[] | Para dropdowns |
+| `turnos` | Turno[] | Para dropdowns |
+| `loading` | boolean | A carregar |
+| `dialogOpen` | boolean | Modal criar/editar |
+| `editing` | Restricao\|null | Em edição |
 
 ---
 
-## 🔧 Lógica de Verificação (EscalaSemanal)
+## ✅ Validação (Zod)
 
 ```typescript
-// auxTemRestricao(auxId, posto, turnoLetra, date)
-// 1. Filtra restricoes por auxiliar_id = auxId
-// 2. Verifica se data está dentro do range (data_inicio, data_fim)
-// 3. Verifica match:
-//    - Se turno_id preenchido: converte para letra (M/T/N) e compara
-//    - Se posto preenchido: compara com o posto da célula
-//    - Combinada: ambos têm de fazer match
+const schema = z.object({
+  auxiliar_id: z.string().min(1, "Auxiliar é obrigatório"),
+  turno_id: z.string().optional(),
+  posto: z.string().optional(),
+  motivo: z.string().optional(),
+  data_inicio: z.string().optional(),
+  data_fim: z.string().optional(),
+})
 ```
 
-### Texto de Restrição para UI
+---
+
+## 🔧 Funções
+
+| Função | O Que Faz |
+|---|---|
+| `fetchAll()` | Carrega restricoes + auxiliares + turnos |
+| `onSubmit(data)` | INSERT ou UPDATE restrição |
+| `handleDelete(id)` | DELETE com confirmação |
+
+---
+
+## 🏷️ turnoParaLetra (usado na UI)
+
+A função `turnoParaLetra` mostra em que célula M/T/N cai cada turno nas dropdowns:
+
 ```typescript
-// getRestricaoDescricao() retorna:
-"este posto (RX URG)"           // só posto
-"este turno (M)"                // só turno
-"este posto (TAC2) neste turno (N)"  // combinada
+function turnoParaLetra(t: { nome: string; horario_inicio: string }): string | null {
+  const n = t.nome.toUpperCase().trim()
+  const h = (t.horario_inicio ?? "").slice(0, 5)
+  if (n.startsWith("MT")) return "MT"
+  if (n.startsWith("N")) return "N"
+  if (h >= "20:00" || (h > "" && h < "06:00")) return "N"
+  if (h >= "06:00" && h < "14:00") return "M"
+  if (h >= "14:00" && h < "20:00") return "T"
+  if (n.startsWith("M")) return "M"
+  if (n.startsWith("T")) return "T"
+  return null
+}
 ```
+
+> Ver explicação completa em [[26 - Classificação M-T-N por Horário]]
 
 ---
 
@@ -59,10 +85,15 @@ Gestão de restrições por auxiliar. Uma restrição impede que um auxiliar sej
 
 ```typescript
 // Fetch
-supabase.from("restricoes").select("id,auxiliar_id,turno_id,posto,motivo,data_inicio,data_fim")
+supabase.from("restricoes").select("*")
+supabase.from("auxiliares").select("*").order("nome")
+supabase.from("turnos").select("*").order("nome")
 
 // Criar
 supabase.from("restricoes").insert({ auxiliar_id, turno_id, posto, motivo, data_inicio, data_fim })
+
+// Editar
+supabase.from("restricoes").update({ ... }).eq("id", id)
 
 // Apagar
 supabase.from("restricoes").delete().eq("id", id)
@@ -70,16 +101,39 @@ supabase.from("restricoes").delete().eq("id", id)
 
 ---
 
-## 🖥️ UI
+## ⚙️ Aplicação das Restrições
 
-- **Tabela:** Auxiliar, Turno, Posto, Motivo, Período, Acções
-- **Dialog:** Dropdown auxiliar + dropdown turno (opcional) + dropdown posto (opcional) + campo motivo + datas início/fim
-- **Validação:** Pelo menos turno OU posto deve ser preenchido
+As restrições são verificadas em:
+1. [[07 - Escala Semanal]] — antes de atribuir um aux a uma célula
+2. [[16 - Algoritmo de Geração]] — durante a geração automática mensal
+
+Lógica de verificação:
+```typescript
+function temRestricao(
+  restricoes: Restricao[],
+  auxId: string,
+  turnoId: string,
+  posto: string,
+  data: string
+): boolean {
+  return restricoes.some(r => {
+    if (r.auxiliar_id !== auxId) return false
+    if (r.data_inicio && data < r.data_inicio) return false
+    if (r.data_fim && data > r.data_fim) return false
+    const matchTurno = !r.turno_id || r.turno_id === turnoId
+    const matchPosto = !r.posto || r.posto === posto
+    return matchTurno && matchPosto
+  })
+}
+```
 
 ---
 
 ## 🔗 Ver Também
 
-- [[07 - Escala Semanal]] — Onde as restrições são aplicadas
-- [[16 - Algoritmo de Geração]] — Restrições na geração mensal
+- [[08 - Auxiliares]] — Auxiliares com restrições
+- [[10 - Turnos]] — Turnos usados nas restrições
 - [[19 - Postos e Turnos]] — Postos disponíveis
+- [[26 - Classificação M-T-N por Horário]] — `turnoParaLetra` nas dropdowns
+- [[07 - Escala Semanal]] — Aplicação das restrições na escala
+- [[16 - Algoritmo de Geração]] — Aplicação durante geração automática
