@@ -26,6 +26,30 @@ const POSTOS_OPTIONS = [
   { key: "TRANSPORT", label: "Transportes INT/URG" },
 ] as const
 
+// Classifica um turno na sua célula da escala semanal: M / T / N / MT / null
+function turnoParaLetra(t: { nome: string; horario_inicio: string }): string | null {
+  const n = t.nome.toUpperCase().trim()
+  const h = (t.horario_inicio ?? "").slice(0, 5)
+  if (n.startsWith("MT")) return "MT"
+  if (n.startsWith("N")) return "N"
+  if (h) {
+    if (h >= "20:00") return "N"
+    if (h > "" && h < "06:00") return "N"
+    if (h >= "06:00" && h < "14:00") return "M"
+    if (h >= "14:00" && h < "20:00") return "T"
+  }
+  if (n.startsWith("M")) return "M"
+  if (n.startsWith("T")) return "T"
+  return null
+}
+
+const LETRA_STYLE: Record<string, { bg: string; color: string; label: string }> = {
+  M:  { bg: "#C6EFCE", color: "#276221", label: "Manhã"  },
+  T:  { bg: "#FFEB9C", color: "#9C6500", label: "Tarde"  },
+  N:  { bg: "#BDD7EE", color: "#1F497D", label: "Noite"  },
+  MT: { bg: "#BAE6FD", color: "#0369A1", label: "Misto"  },
+}
+
 // Paleta de cores que corresponde às cores do Excel da escala
 const COLOR_PALETTE = [
   { hex: "#FEF08A", label: "Amarelo – Manhã (M)" },
@@ -144,6 +168,7 @@ export default function Turnos() {
               <TableRow>
                 <TableHead>Código</TableHead>
                 <TableHead>Horário</TableHead>
+                <TableHead>Célula Semanal</TableHead>
                 <TableHead>Postos</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
@@ -161,6 +186,26 @@ export default function Turnos() {
                   </TableCell>
                   <TableCell className="text-gray-600">
                     {turno.horario_inicio.slice(0, 5)} – {turno.horario_fim.slice(0, 5)}
+                  </TableCell>
+                  <TableCell>
+                    {(() => {
+                      const letra = turnoParaLetra(turno)
+                      if (!letra) return <span className="text-gray-400 text-xs italic">—</span>
+                      const style = LETRA_STYLE[letra]
+                      return (
+                        <span
+                          title={style.label}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                            background: style.bg, color: style.color,
+                            fontWeight: 700, fontSize: 11, padding: "2px 8px",
+                            borderRadius: 6, border: `1px solid ${style.color}33`,
+                          }}
+                        >
+                          {letra} <span style={{ fontWeight: 400, opacity: 0.75 }}>({style.label})</span>
+                        </span>
+                      )
+                    })()}
                   </TableCell>
                   <TableCell className="text-gray-600 text-sm">
                     {(turno.postos ?? []).length === 0

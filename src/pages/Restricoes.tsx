@@ -27,12 +27,27 @@ const TURNO_LETRAS = ["M", "T", "N"] as const
 type TurnoLetra = (typeof TURNO_LETRAS)[number]
 
 function turnoParaLetra(t: { nome: string; horario_inicio: string }): TurnoLetra | null {
-  const n = t.nome.toUpperCase()
-  const isNoc = t.horario_inicio >= "20:00"
-  if (isNoc || n.startsWith("N")) return "N"
+  const n = t.nome.toUpperCase().trim()
+  const h = (t.horario_inicio ?? "").slice(0, 5)
+
+  // MT prefix = mixed (manhã+tarde) → cannot assign to a single cell
   if (n.startsWith("MT")) return null
+
+  // N prefix always means night
+  if (n.startsWith("N")) return "N"
+
+  // Classify by horario_inicio (primary truth)
+  if (h) {
+    if (h >= "20:00") return "N"                         // 20:00–23:59 → night
+    if (h > "" && h < "06:00") return "N"               // 00:00–05:59 → overnight/night
+    if (h >= "06:00" && h < "14:00") return "M"         // 06:00–13:59 → morning
+    if (h >= "14:00" && h < "20:00") return "T"         // 14:00–19:59 → afternoon
+  }
+
+  // Fallback to name prefix when horario doesn't resolve
   if (n.startsWith("M")) return "M"
   if (n.startsWith("T")) return "T"
+
   return null
 }
 

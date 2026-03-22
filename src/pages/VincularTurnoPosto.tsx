@@ -2,6 +2,29 @@ import { useEffect, useState, useCallback } from "react"
 import { supabase } from "@/lib/supabaseClient"
 import type { Turno } from "@/types"
 
+function turnoParaLetra(t: { nome: string; horario_inicio: string }): string | null {
+  const n = t.nome.toUpperCase().trim()
+  const h = (t.horario_inicio ?? "").slice(0, 5)
+  if (n.startsWith("MT")) return "MT"
+  if (n.startsWith("N")) return "N"
+  if (h) {
+    if (h >= "20:00") return "N"
+    if (h > "" && h < "06:00") return "N"
+    if (h >= "06:00" && h < "14:00") return "M"
+    if (h >= "14:00" && h < "20:00") return "T"
+  }
+  if (n.startsWith("M")) return "M"
+  if (n.startsWith("T")) return "T"
+  return null
+}
+
+const LETRA_STYLE: Record<string, { bg: string; color: string; label: string }> = {
+  M:  { bg: "#C6EFCE", color: "#276221", label: "Manhã"  },
+  T:  { bg: "#FFEB9C", color: "#9C6500", label: "Tarde"  },
+  N:  { bg: "#BDD7EE", color: "#1F497D", label: "Noite"  },
+  MT: { bg: "#BAE6FD", color: "#0369A1", label: "Misto"  },
+}
+
 const POSTOS_OPTIONS = [
   { key: "RX_URG",    label: "RX URG" },
   { key: "TAC1",      label: "TAC 1" },
@@ -73,6 +96,9 @@ export default function VincularTurnoPosto() {
                 <th className="text-left px-4 py-3 font-semibold text-gray-700 min-w-[90px]">
                   Horário
                 </th>
+                <th className="text-center px-3 py-3 font-semibold text-gray-700 min-w-[90px]">
+                  Célula
+                </th>
                 {POSTOS_OPTIONS.map(p => (
                   <th key={p.key} className="text-center px-3 py-3 font-semibold text-gray-700 min-w-[90px]">
                     {p.label}
@@ -101,6 +127,22 @@ export default function VincularTurnoPosto() {
                     </td>
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                       {turno.horario_inicio.slice(0, 5)} – {turno.horario_fim.slice(0, 5)}
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      {(() => {
+                        const letra = turnoParaLetra(turno)
+                        if (!letra) return <span style={{ color: "#9CA3AF", fontSize: 11 }}>—</span>
+                        const s = LETRA_STYLE[letra]
+                        return (
+                          <span title={s.label} style={{
+                            display: "inline-block", background: s.bg, color: s.color,
+                            fontWeight: 700, fontSize: 11, padding: "2px 8px",
+                            borderRadius: 6, border: `1px solid ${s.color}33`,
+                          }}>
+                            {letra}
+                          </span>
+                        )
+                      })()}
                     </td>
                     {POSTOS_OPTIONS.map(p => (
                       <td key={p.key} className="text-center px-3 py-3">
