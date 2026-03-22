@@ -589,7 +589,7 @@ export default function EscalaSemanal() {
     if (!selCell) return
     const isDouble = isMultiPerson(selCell.posto, selCell.turnoLetra)
     if (!isDouble && !selPersonId) return
-    if (isDouble && selPersonIds.length === 0) return
+    if (isDouble && selPersonIds.length === 0) { await clearEscala(); return }
 
     // ── Hard-block: aux não pode estar em 2+ postos no mesmo turno ──────────
     if (selCell.tipo === "auxiliar") {
@@ -699,12 +699,21 @@ export default function EscalaSemanal() {
     if (!selCell) return
     closeDialog()
     if (isMultiPerson(selCell.posto, selCell.turnoLetra)) {
-      // Multi-person cell: delete all rows for this cell
+      // Multi-person cell: delete all real semanal rows for this cell
       const rows = escalas.filter(e =>
         e.data===selCell.data && e.turno_letra===selCell.turnoLetra && e.posto===selCell.posto && !e.id.startsWith("mensal_")
       )
       setEscalas(p => p.filter(e => !rows.some(r => r.id === e.id)))
       for (const row of rows) await supabase.from("escalas").delete().eq("id", row.id)
+      // Also remove the mensal entries for any aux derived into this cell
+      const derivedAuxIds = mensalAssignMap.get(`${selCell.data}|${selCell.turnoLetra}|${selCell.posto}`) ?? []
+      for (const auxId of derivedAuxIds) {
+        const mensalEntry = mensalEntries.find(me => me.auxiliar_id === auxId && me.data === selCell.data)
+        if (mensalEntry) {
+          await supabase.from("escalas").delete().eq("id", mensalEntry.id)
+          setMensalEntries(p => p.filter(me => me.id !== mensalEntry.id))
+        }
+      }
       return
     }
     const ex = getEscala(selCell.data, selCell.turnoLetra, selCell.posto)
@@ -1185,9 +1194,13 @@ export default function EscalaSemanal() {
   const dayIdx     = selCell ? weekDays.findIndex(d=>format(d,"yyyy-MM-dd")===selCell.data) : -1
   const dayLabel   = dayIdx>=0 ? `${format(weekDays[dayIdx],"d")} ${DIAS_PT[dayIdx]}` : ""
   const _existingEsc = selCell && !isDouble ? getEscala(selCell.data,selCell.turnoLetra,selCell.posto) : undefined
-  // Show "Limpar" only for real semanal records; derived mensal rows cannot be cleared here
+  // hasExisting: true when there is something to "Remover" — real semanal records OR derived mensal entries
+  const hasExistingDoubleReal = !!(isDouble && selCell &&
+    escalas.some(e => e.data===selCell.data && e.turno_letra===selCell.turnoLetra && e.posto===selCell.posto && !e.id.startsWith("mensal_")))
+  const hasExistingDoubleDerived = !!(isDouble && selCell &&
+    (mensalAssignMap.get(`${selCell.data}|${selCell.turnoLetra}|${selCell.posto}`) ?? []).length > 0)
   const hasExisting = isDouble
-    ? escalas.some(e => e.data===selCell?.data && e.turno_letra===selCell?.turnoLetra && e.posto===selCell?.posto && !e.id.startsWith("mensal_"))
+    ? (hasExistingDoubleReal || hasExistingDoubleDerived)
     : !!(_existingEsc && !_existingEsc.id.startsWith("mensal_"))
   const isDerived   = !isDouble && !!(_existingEsc?.id?.startsWith("mensal_"))
 
@@ -1511,7 +1524,7 @@ export default function EscalaSemanal() {
                 {selCell.posto === "TRANSPORT"
                   ? "Selecione até 2 auxiliares para Transportes — Manhã"
                   : selCell.posto === "EXAM1"
-                    ? "Selecione até 2 auxiliares para ECO URG"
+                    ? `Selecione até 2 auxiliares para ECO URG — ${selCell.turnoLetra === "M" ? "Manhã" : "Tarde"}`
                     : `Selecione até ${maxPersons} auxiliares para Exames Comp. (2) — Manhã`}
               </div>
             )}
@@ -1609,10 +1622,10 @@ export default function EscalaSemanal() {
                   onMouseEnter={e=>{e.currentTarget.style.background="#FFF7ED";e.currentTarget.style.borderColor="#C2410C"}}
                   onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#FED7AA"}}>Remover (mensal)</button>
               )}
-              {isDouble && selPersonIds.length > 0 && (
+              {isDouble && selPersonIds.length > 0 && !hasExisting && (
                 <button onClick={()=>setSelPersonIds([])} style={{ background:"none",border:"1.5px solid #FFCDD2",borderRadius:"8px",padding:"7px 14px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#E57373",transition:"all 0.12s" }}
                   onMouseEnter={e=>{e.currentTarget.style.background="#FFF5F5";e.currentTarget.style.borderColor="#E57373"}}
-                  onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#FFCDD2"}}>Limpar</button>
+                  onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#FFCDD2"}}>Limpar seleção</button>
               )}
               <button onClick={closeDialog} style={{ background:"#F4F4F4",border:"none",borderRadius:"8px",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#555",transition:"background 0.12s" }}
                 onMouseEnter={e=>(e.currentTarget.style.background="#E8E8E8")} onMouseLeave={e=>(e.currentTarget.style.background="#F4F4F4")}>Cancelar</button>
