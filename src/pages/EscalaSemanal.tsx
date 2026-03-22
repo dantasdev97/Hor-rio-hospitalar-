@@ -7,6 +7,7 @@ import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 import html2canvas from "html2canvas"
 import { supabase } from "@/lib/supabaseClient"
+import { useConfig } from "@/contexts/ConfigContext"
 import { Button } from "@/components/ui/button"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -64,12 +65,6 @@ const ABSENCE_LABELS: Record<string, string> = {
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const HORARIOS_KEY = "cfg_horarios"
-const DEFAULT_CFG = { maxTurnosSemana: 5, maxTurnosNoturnos: 2, bloquearTurnosConsecutivos: true, horasDescansMinimas: 11, maxDiasConsecutivos: 6, maxTurnosMes: 22, maxTurnosNoturnosMes: 4, alertasConflito: true, permitirSubstituicoes: false }
-function loadCfg() {
-  try { const r = localStorage.getItem(HORARIOS_KEY); return r ? { ...DEFAULT_CFG, ...JSON.parse(r) } : DEFAULT_CFG }
-  catch { return DEFAULT_CFG }
-}
 
 // ─── Helpers de descanso ─────────────────────────────────────────────────────
 function toMinutesSem(time: string): number {
@@ -124,6 +119,7 @@ function ConfirmModal({ title, body, onConfirm, onCancel }: { title:string;body:
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function EscalaSemanal() {
+  const { horarios } = useConfig()
   const [searchParams, setSearchParams] = useSearchParams()
   const [highlightAuxId,   setHighlightAuxId]   = useState<string | null>(null)
   const [highlightAuxNome, setHighlightAuxNome] = useState<string | null>(null)
@@ -382,7 +378,7 @@ export default function EscalaSemanal() {
     turnoLetra: TurnoLetra,
     data: string
   ): string | null {
-    const cfg = loadCfg()
+    const cfg = horarios
     // Regra 1: Aux com turno N no dia anterior não pode fazer turno M no dia seguinte
     if (turnoLetra === "M") {
       const prevDate = format(addDays(parseISO(data), -1), "yyyy-MM-dd")
@@ -490,7 +486,7 @@ export default function EscalaSemanal() {
 
   function calcularAlertasSemanal(): AlertaSemanal[] {
     const alertas: AlertaSemanal[] = []
-    const cfg = loadCfg()
+    const cfg = horarios
 
     for (const data of weekDays.map(d => format(d, "yyyy-MM-dd"))) {
       const dayName = format(parseISO(data), "EEEE, d MMMM", { locale: ptBR })
