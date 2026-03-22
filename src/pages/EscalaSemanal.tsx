@@ -170,6 +170,8 @@ export default function EscalaSemanal() {
   // Ctrl+Click quick swap
   const [ctrlHeld, setCtrlHeld] = useState(false)
   const [ctrlSelectedCell, setCtrlSelectedCell] = useState<{ data:string; turnoLetra:TurnoLetra; posto:PostoKey; auxId:string }|null>(null)
+  // Visual flash after swap
+  const [swappedCells, setSwappedCells] = useState<Set<string>>(new Set())
 
   const weekStart = startOfWeek(referenceDate, { weekStartsOn:1 })
   const weekDays  = Array.from({ length:7 }, (_,i) => addDays(weekStart, i))
@@ -975,6 +977,12 @@ export default function EscalaSemanal() {
       setToastMsg(`✅ Troca realizada: ${getFirstName(nomeA)} ↔ ${getFirstName(nomeB)}`)
       setShowToast(true)
       setTimeout(() => setShowToast(false), 3000)
+      const flashKeys = new Set([
+        `${source.data}|${source.turnoLetra}|${source.posto}`,
+        `${target.data}|${target.turnoLetra}|${target.posto}`
+      ])
+      setSwappedCells(flashKeys)
+      setTimeout(() => setSwappedCells(new Set()), 2500)
     } catch {
       setToastMsg("❌ Erro ao realizar troca. Dados recarregados.")
       setShowToast(true)
@@ -1662,6 +1670,7 @@ export default function EscalaSemanal() {
                         ctrlSelectedCell.data === dateStr &&
                         ctrlSelectedCell.turnoLetra === turno &&
                         ctrlSelectedCell.posto === (p.key as PostoKey)
+                      const isSwapped = swappedCells.has(`${dateStr}|${turno}|${p.key}`)
                       return(
                         <td key={p.key}
                           onClick={opera ? () => {
@@ -1682,8 +1691,9 @@ export default function EscalaSemanal() {
                             fontStyle: placeholder ? "italic" : "normal",
                             color: placeholder ? "#9CA3AF" : "inherit",
                             cursor: !opera ? "not-allowed" : ctrlHeld && cellName && !isDouble && !isDocCell ? "crosshair" : "pointer",
-                            border: isCtrlSelected ? "2px solid #2563EB" : temRestr ? "2px solid #EF4444" : isHighlighted ? "2px solid #3B82F6" : B,
-                            boxShadow: isCtrlSelected ? "inset 0 0 0 1px #93C5FD" : isHighlighted ? "inset 0 0 0 1px #93C5FD" : undefined }}
+                            border: isCtrlSelected ? "2px solid #2563EB" : isSwapped ? "2px solid #2563EB" : temRestr ? "2px solid #EF4444" : isHighlighted ? "2px solid #3B82F6" : B,
+                            boxShadow: isCtrlSelected ? "inset 0 0 0 1px #93C5FD" : isHighlighted ? "inset 0 0 0 1px #93C5FD" : undefined,
+                            animation: isSwapped ? "swapFlash 1.2s ease 2" : undefined }}
                           onMouseEnter={opera ? e=>(e.currentTarget.style.filter="brightness(0.91)") : undefined}
                           onMouseLeave={opera ? e=>(e.currentTarget.style.filter="brightness(1)") : undefined}>
                           {opera ? (cellName || placeholder || "") : "—"}
@@ -1756,7 +1766,7 @@ export default function EscalaSemanal() {
                       <button onClick={closeSwapMode} style={{ background:"none",border:"none",cursor:"pointer",padding:"4px",display:"flex",alignItems:"center",color:"#6B7280" }}>
                         <ChevronLeft size={16}/>
                       </button>
-                      <span style={{ fontSize:12,fontWeight:600,color:"#374151" }}>Trocar turno de <strong>{getFirstName(sourceAuxNome)}</strong> ({sourceDayLabel} {swapSourceCell.turnoLetra} {sourcePostoLabel})</span>
+                      <span style={{ fontSize:12,fontWeight:600,color:"#374151" }}>Trocar turno de <strong>{getFirstName(sourceAuxNome)}</strong></span>
                     </div>
                     <div style={{ padding:"4px 20px 8px" }}>
                       <div style={{ fontSize:11,color:"#9CA3AF" }}>Selecione o auxiliar para trocar:</div>
@@ -1837,7 +1847,7 @@ export default function EscalaSemanal() {
                         <div style={{ width:"36px",height:"36px",borderRadius:"10px",backgroundColor:"#2563EB",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:700,color:"#FFF" }}>{getInitials(sourceAuxNome)}</div>
                         <div>
                           <div style={{ fontSize:"13px",fontWeight:600,color:"#1A1A2E" }}>{getFirstName(sourceAuxNome)}</div>
-                          <div style={{ fontSize:"11px",color:"#6B7280" }}>{sourceDayLabel} — {swapSourceCell.turnoLetra} — {sourcePostoLabel}</div>
+                          <div style={{ fontSize:"11px",color:"#6B7280" }}>Faz Turno {swapSourceCell.turnoLetra} em {sourcePostoLabel} — {sourceDayLabel}</div>
                         </div>
                       </div>
                       <div style={{ display:"flex",alignItems:"center",justifyContent:"center" }}>
@@ -1847,7 +1857,7 @@ export default function EscalaSemanal() {
                         <div style={{ width:"36px",height:"36px",borderRadius:"10px",backgroundColor:"#2563EB",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:700,color:"#FFF" }}>{getInitials(targetAuxNome)}</div>
                         <div>
                           <div style={{ fontSize:"13px",fontWeight:600,color:"#1A1A2E" }}>{getFirstName(targetAuxNome)}</div>
-                          <div style={{ fontSize:"11px",color:"#6B7280" }}>{targetDayLabel} — {swapTargetCell.turnoLetra} — {targetPostoLabel}</div>
+                          <div style={{ fontSize:"11px",color:"#6B7280" }}>Faz Turno {swapTargetCell.turnoLetra} em {targetPostoLabel} — {targetDayLabel}</div>
                         </div>
                       </div>
                     </div>
@@ -2054,7 +2064,7 @@ export default function EscalaSemanal() {
                   <div style={{ width:"32px",height:"32px",borderRadius:"8px",backgroundColor:"#2563EB",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",fontWeight:700,color:"#FFF" }}>{getInitials(nomeA)}</div>
                   <div>
                     <div style={{ fontSize:"13px",fontWeight:600 }}>{getFirstName(nomeA)}</div>
-                    <div style={{ fontSize:"11px",color:"#6B7280" }}>{dayA} — {swapSourceCell.turnoLetra} — {postoA}</div>
+                    <div style={{ fontSize:"11px",color:"#6B7280" }}>Faz Turno {swapSourceCell.turnoLetra} em {postoA} — {dayA}</div>
                   </div>
                 </div>
                 <div style={{ display:"flex",alignItems:"center",justifyContent:"center",margin:"4px 0" }}>
@@ -2064,7 +2074,7 @@ export default function EscalaSemanal() {
                   <div style={{ width:"32px",height:"32px",borderRadius:"8px",backgroundColor:"#2563EB",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",fontWeight:700,color:"#FFF" }}>{getInitials(nomeB)}</div>
                   <div>
                     <div style={{ fontSize:"13px",fontWeight:600 }}>{getFirstName(nomeB)}</div>
-                    <div style={{ fontSize:"11px",color:"#6B7280" }}>{dayB} — {swapTargetCell.turnoLetra} — {postoB}</div>
+                    <div style={{ fontSize:"11px",color:"#6B7280" }}>Faz Turno {swapTargetCell.turnoLetra} em {postoB} — {dayB}</div>
                   </div>
                 </div>
               </div>
@@ -2252,6 +2262,7 @@ export default function EscalaSemanal() {
 
       <style>{`
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes swapFlash{0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,0)}25%,75%{box-shadow:0 0 0 4px rgba(37,99,235,0.55)}50%{box-shadow:0 0 0 6px rgba(37,99,235,0.85)}}
         @keyframes slideUp{from{opacity:0;transform:translateY(20px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
         @keyframes slideLeftIn{from{opacity:0;transform:translateX(100%)}to{opacity:1;transform:translateX(0)}}
 

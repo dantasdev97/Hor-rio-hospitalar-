@@ -5,7 +5,7 @@ import { ptBR } from "date-fns/locale"
 import {
   ChevronLeft, ChevronRight, X, Check,
   FileDown, MessageCircle, Wand2, Trash2, RotateCcw, Loader2, Printer, Loader, CalendarDays,
-  AlertCircle, MoreVertical,
+  AlertCircle, MoreVertical, ArrowLeftRight,
 } from "lucide-react"
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
@@ -190,6 +190,18 @@ export default function EscalaMensal() {
   const tableRef     = useRef<HTMLTableElement>(null)
   const prevAlertIds = useRef(new Set<string>())
   const exportMenuRef = useRef<HTMLDivElement>(null)
+
+  // ── Swap Mensal state ──────────────────────────────────────────────────────
+  type SwapMensalCell = { auxId: string; data: string; turnoId: string; turnoNome: string }
+  const [swapMensal, setSwapMensal]               = useState(false)
+  const [swapMensalSource, setSwapMensalSource]   = useState<SwapMensalCell | null>(null)
+  const [swapMensalTargetAuxId, setSwapMensalTargetAuxId] = useState<string | null>(null)
+  const [swapMensalTargetShift, setSwapMensalTargetShift] = useState<SwapMensalCell | null>(null)
+  const [swapMensalConfirmOpen, setSwapMensalConfirmOpen] = useState(false)
+  const [swappingMensal, setSwappingMensal]       = useState(false)
+  const [ctrlHeldMensal, setCtrlHeldMensal]       = useState(false)
+  const [ctrlSelMensal, setCtrlSelMensal]         = useState<SwapMensalCell | null>(null)
+  const [swappedCellsMensal, setSwappedCellsMensal] = useState<Set<string>>(new Set())
 
   const year        = currentDate.getFullYear()
   const month       = currentDate.getMonth()
@@ -471,6 +483,104 @@ export default function EscalaMensal() {
     setToastMsg(msg)
     setShowToast(true)
     setTimeout(() => setShowToast(false), 3500)
+  }
+
+  // ── Ctrl key listener (Mensal swap) ───────────────────────────────────────
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.key === "Control") setCtrlHeldMensal(true) }
+    const up   = (e: KeyboardEvent) => { if (e.key === "Control") { setCtrlHeldMensal(false); setCtrlSelMensal(null) } }
+    const blur = () => { setCtrlHeldMensal(false); setCtrlSelMensal(null) }
+    window.addEventListener("keydown", down)
+    window.addEventListener("keyup", up)
+    window.addEventListener("blur", blur)
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur) }
+  }, [])
+
+  // ── Swap Mensal helpers ────────────────────────────────────────────────────
+  function getAuxShiftsForMonth(auxId: string): Array<{ data: string; turnoId: string; turnoNome: string; dayNum: number }> {
+    return escalas
+      .filter(e => e.auxiliar_id === auxId && e.turno_id)
+      .map(e => {
+        const t = turnos.find(t => t.id === e.turno_id)
+        if (!t) return null
+        const dayNum = parseInt(e.data.split("-")[2])
+        return { data: e.data, turnoId: e.turno_id!, turnoNome: t.nome, dayNum }
+      })
+      .filter(Boolean)
+      .sort((a, b) => a!.dayNum - b!.dayNum) as Array<{ data: string; turnoId: string; turnoNome: string; dayNum: number }>
+  }
+
+  function handleCtrlClickMensal(auxId: string, day: number) {
+    const data = mkDateStr(day)
+    const esc = escalas.find(e => e.auxiliar_id === auxId && e.data === data)
+    if (!esc?.turno_id) return
+    const turnoNome = turnos.find(t => t.id === esc.turno_id)?.nome ?? "?"
+    const cell: SwapMensalCell = { auxId, data, turnoId: esc.turno_id, turnoNome }
+    if (!ctrlSelMensal) {
+      setCtrlSelMensal(cell)
+    } else {
+      if (ctrlSelMensal.auxId === auxId && ctrlSelMensal.data === data) { setCtrlSelMensal(null); return }
+      if (ctrlSelMensal.auxId === auxId) { setCtrlSelMensal(null); return }
+      setSwapMensalSource(ctrlSelMensal)
+      setSwapMensalTargetShift(cell)
+      setSwapMensalConfirmOpen(true)
+      setCtrlSelMensal(null)
+    }
+  }
+
+  function openSwapMensal() {
+    if (!selCell || !existingInCell?.turno_id) return
+    const turnoNome = turnos.find(t => t.id === existingInCell.turno_id)?.nome ?? "?"
+    setSwapMensalSource({ auxId: selCell.auxiliarId, data: selCell.data, turnoId: existingInCell.turno_id, turnoNome })
+    setSwapMensalTargetAuxId(null)
+    setSwapMensalTargetShift(null)
+    setSwapMensal(true)
+    closeDialog()
+  }
+
+  async function executeMensalSwap(source: SwapMensalCell, target: SwapMensalCell) {
+    setSwappingMensal(true)
+    try {
+      const escA = escalas.find(e => e.auxiliar_id === source.auxId && e.data === source.data)
+      const escB = escalas.find(e => e.auxiliar_id === target.auxId && e.data === target.data)
+      if (escA) {
+        await supabase.from("escalas").update({ turno_id: target.turnoId, codigo_especial: null }).eq("id", escA.id)
+      } else {
+        await supabase.from("escalas").insert({ auxiliar_id: source.auxId, data: source.data, tipo_escala: "mensal", status: "alocado", turno_id: target.turnoId, codigo_especial: null })
+      }
+      if (escB) {
+        await supabase.from("escalas").update({ turno_id: source.turnoId, codigo_especial: null }).eq("id", escB.id)
+      } else {
+        await supabase.from("escalas").insert({ auxiliar_id: target.auxId, data: target.data, tipo_escala: "mensal", status: "alocado", turno_id: source.turnoId, codigo_especial: null })
+      }
+      // Optimistic local update
+      setEscalas(prev => {
+        let next = [...prev]
+        const idxA = next.findIndex(e => e.auxiliar_id === source.auxId && e.data === source.data)
+        const idxB = next.findIndex(e => e.auxiliar_id === target.auxId && e.data === target.data)
+        if (idxA >= 0) next[idxA] = { ...next[idxA], turno_id: target.turnoId, codigo_especial: null }
+        else next.push({ id: `tmp_${Date.now()}_a`, data: source.data, auxiliar_id: source.auxId, turno_id: target.turnoId, codigo_especial: null })
+        if (idxB >= 0) next[idxB] = { ...next[idxB], turno_id: source.turnoId, codigo_especial: null }
+        else next.push({ id: `tmp_${Date.now()}_b`, data: target.data, auxiliar_id: target.auxId, turno_id: source.turnoId, codigo_especial: null })
+        return next
+      })
+      const flashKeys = new Set([`${source.auxId}_${source.data}`, `${target.auxId}_${target.data}`])
+      setSwappedCellsMensal(flashKeys)
+      setTimeout(() => setSwappedCellsMensal(new Set()), 2500)
+      const nomeA = auxiliares.find(a => a.id === source.auxId)?.nome?.split(" ")[0] ?? "?"
+      const nomeB = auxiliares.find(a => a.id === target.auxId)?.nome?.split(" ")[0] ?? "?"
+      showToastMsg(`✅ Troca realizada: ${nomeA} ↔ ${nomeB}`)
+    } catch {
+      showToastMsg("❌ Erro ao realizar troca.")
+      fetchAll()
+    } finally {
+      setSwappingMensal(false)
+      setSwapMensal(false)
+      setSwapMensalSource(null)
+      setSwapMensalTargetAuxId(null)
+      setSwapMensalTargetShift(null)
+      setSwapMensalConfirmOpen(false)
+    }
   }
 
   // ── Alertas / Validações ──────────────────────────────────────────────────
@@ -1402,11 +1512,20 @@ export default function EscalaMensal() {
                         {days.map(d=>{
                           const e=getEscala(aux.id,d); const di=getCellDisplay(e, aux.id, d)
                           const we=isWeekend(year,month,d)
+                          const dateStr=mkDateStr(d)
                           const bg=di?di.bg:we?"#E5E7EB":rowBg
-                          const fl=flashCells.has(`${aux.id}_${mkDateStr(d)}`)
+                          const fl=flashCells.has(`${aux.id}_${dateStr}`)
+                          const isCtrlSel = ctrlSelMensal && ctrlSelMensal.auxId===aux.id && ctrlSelMensal.data===dateStr
+                          const isSwappedM = swappedCellsMensal.has(`${aux.id}_${dateStr}`)
+                          const hasTurno = !!e?.turno_id
                           return(
-                            <td key={d} onClick={()=>openCell(aux.id,d)} title={di?.code??(di?.isSemanal?"(da escala semanal)":"") }
-                              style={{ border:`1px solid ${di?.isSemanal?"#6366F1":"#CCC"}`,padding:"2px 0",textAlign:"center",cursor:"pointer",background:bg,color:di?di.text:"#374151",fontWeight:di?700:400,fontSize:10,minWidth:30,userSelect:"none",transition:"filter 0.1s",animation:fl?"cellFlash 0.8s ease":"none",fontStyle:di?.isSemanal?"italic":"normal",opacity:di?.isSemanal?0.8:1 }}
+                            <td key={d}
+                              onClick={()=>{
+                                if (ctrlHeldMensal && hasTurno) { handleCtrlClickMensal(aux.id, d) }
+                                else { openCell(aux.id,d) }
+                              }}
+                              title={di?.code??(di?.isSemanal?"(da escala semanal)":"")}
+                              style={{ border:`2px solid ${isCtrlSel?"#2563EB":isSwappedM?"#2563EB":di?.isSemanal?"#6366F1":"#CCC"}`,padding:"2px 0",textAlign:"center",cursor:ctrlHeldMensal&&hasTurno?"crosshair":"pointer",background:isCtrlSel?"#DBEAFE":bg,color:di?di.text:"#374151",fontWeight:di?700:400,fontSize:10,minWidth:30,userSelect:"none",transition:"filter 0.1s",animation:fl?"cellFlash 0.8s ease":isSwappedM?"swapFlash 1.2s ease 2":"none",fontStyle:di?.isSemanal?"italic":"normal",opacity:di?.isSemanal?0.8:1 }}
                               onMouseEnter={ev=>(ev.currentTarget.style.filter="brightness(0.88)")}
                               onMouseLeave={ev=>(ev.currentTarget.style.filter="brightness(1)")}>
                               {di?.code??""}
@@ -1685,7 +1804,14 @@ export default function EscalaMensal() {
           </div>
           {/* footer */}
           <div style={{padding:"14px 22px",borderTop:"1px solid #F0F0F0",display:"flex",gap:8,justifyContent:"space-between",alignItems:"center"}}>
-            <button onClick={clearEscala} disabled={!existingInCell} style={{background:existingInCell?"#FEF2F2":"#F9FAFB",color:existingInCell?"#DC2626":"#D1D5DB",border:`1.5px solid ${existingInCell?"#FECACA":"#E5E7EB"}`,borderRadius:9,padding:"8px 16px",cursor:existingInCell?"pointer":"not-allowed",fontSize:13,fontWeight:600}}>Limpar</button>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={clearEscala} disabled={!existingInCell} style={{background:existingInCell?"#FEF2F2":"#F9FAFB",color:existingInCell?"#DC2626":"#D1D5DB",border:`1.5px solid ${existingInCell?"#FECACA":"#E5E7EB"}`,borderRadius:9,padding:"8px 16px",cursor:existingInCell?"pointer":"not-allowed",fontSize:13,fontWeight:600}}>Limpar</button>
+              {existingInCell?.turno_id && !existingInCell?.codigo_especial && (
+                <button onClick={openSwapMensal} style={{display:"flex",alignItems:"center",gap:5,background:"#EFF6FF",color:"#2563EB",border:"1.5px solid #BFDBFE",borderRadius:9,padding:"8px 14px",cursor:"pointer",fontSize:13,fontWeight:600}}>
+                  <ArrowLeftRight size={13}/> Trocar
+                </button>
+              )}
+            </div>
             <div style={{display:"flex",gap:8}}>
               <button onClick={closeDialog} style={{background:"#F4F4F5",color:"#374151",border:"none",borderRadius:9,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:600}}>Cancelar</button>
               <button onClick={saveEscala} disabled={saving||!hasSelection} style={{background:saving||!hasSelection?"#E5E7EB":"#4F46E5",color:saving||!hasSelection?"#9CA3AF":"#FFFFFF",border:"none",borderRadius:9,padding:"8px 20px",cursor:saving||!hasSelection?"not-allowed":"pointer",fontSize:13,fontWeight:700,boxShadow:!saving&&hasSelection?"0 2px 8px rgba(79,70,229,0.35)":"none"}}>
@@ -1783,11 +1909,149 @@ export default function EscalaMensal() {
         )
       })()}
 
+      {/* Swap Modal — 3 passos */}
+      {swapMensal && swapMensalSource && (() => {
+        const sourceAux = auxiliares.find(a => a.id === swapMensalSource.auxId)
+        const sourceDayNum = parseInt(swapMensalSource.data.split("-")[2])
+        const sourceDayLabel = `${sourceDayNum} ${DIAS_PT[getDay(new Date(year, month, sourceDayNum))]}`
+        const otherAux = auxiliares.filter(a => a.id !== swapMensalSource.auxId)
+        const targetShifts = swapMensalTargetAuxId ? getAuxShiftsForMonth(swapMensalTargetAuxId) : []
+        const targetAux = swapMensalTargetAuxId ? auxiliares.find(a => a.id === swapMensalTargetAuxId) : null
+        return (
+          <>
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:60,backdropFilter:"blur(3px)",animation:"mFadeIn 0.15s ease"}} onClick={()=>{setSwapMensal(false);setSwapMensalSource(null);setSwapMensalTargetAuxId(null);setSwapMensalTargetShift(null)}}/>
+            <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#fff",borderRadius:18,zIndex:61,width:460,maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 32px 80px rgba(0,0,0,0.28),0 0 0 1px rgba(0,0,0,0.06)",animation:"mSlideUp 0.2s cubic-bezier(0.34,1.56,0.64,1)"}}>
+              {/* header */}
+              <div style={{padding:"18px 22px 14px",borderBottom:"1px solid #F0F0F0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div>
+                  <div style={{fontWeight:800,fontSize:15,color:"#111",display:"flex",alignItems:"center",gap:7}}><ArrowLeftRight size={15} color="#2563EB"/> Troca de Turno</div>
+                  <div style={{fontSize:12,color:"#9CA3AF",marginTop:3}}>{sourceAux?.nome} — {swapMensalSource.turnoNome} — {sourceDayLabel}</div>
+                </div>
+                <button onClick={()=>{setSwapMensal(false);setSwapMensalSource(null);setSwapMensalTargetAuxId(null);setSwapMensalTargetShift(null)}} style={{background:"#F4F4F5",border:"none",cursor:"pointer",padding:"6px",borderRadius:8,color:"#71717A",lineHeight:0}}><X size={16}/></button>
+              </div>
+              {/* body */}
+              <div style={{overflowY:"auto",flex:1,padding:"16px 22px"}}>
+                {!swapMensalTargetAuxId ? (
+                  /* Passo 1 — escolher auxiliar */
+                  <>
+                    <div style={{fontSize:11,fontWeight:700,color:"#9CA3AF",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:10}}>Passo 1 — Escolher auxiliar</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {otherAux.map(a => {
+                        const shifts = getAuxShiftsForMonth(a.id)
+                        if (shifts.length === 0) return null
+                        return (
+                          <button key={a.id} onClick={()=>setSwapMensalTargetAuxId(a.id)}
+                            style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"#F9FAFB",border:"1.5px solid #E5E7EB",borderRadius:10,padding:"10px 14px",cursor:"pointer",fontSize:13,fontWeight:600,color:"#111",textAlign:"left"}}
+                            onMouseEnter={e=>{e.currentTarget.style.background="#EFF6FF";e.currentTarget.style.borderColor="#2563EB"}}
+                            onMouseLeave={e=>{e.currentTarget.style.background="#F9FAFB";e.currentTarget.style.borderColor="#E5E7EB"}}>
+                            <span>{a.nome}</span>
+                            <span style={{fontSize:11,color:"#9CA3AF",fontWeight:400}}>{shifts.length} turnos</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                ) : !swapMensalTargetShift ? (
+                  /* Passo 2 — escolher turno do aux alvo */
+                  <>
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:12}}>
+                      <button onClick={()=>setSwapMensalTargetAuxId(null)} style={{background:"#F4F4F5",border:"none",cursor:"pointer",padding:"5px 8px",borderRadius:7,fontSize:12,color:"#374151",fontWeight:600}}>← Voltar</button>
+                      <div style={{fontSize:11,fontWeight:700,color:"#9CA3AF",textTransform:"uppercase",letterSpacing:"0.07em"}}>Passo 2 — Turno de {targetAux?.nome}</div>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {targetShifts.map(sh => {
+                        const dayLabel = `${sh.dayNum} ${DIAS_PT[getDay(new Date(year, month, sh.dayNum))]}`
+                        return (
+                          <button key={sh.data} onClick={()=>setSwapMensalTargetShift({ auxId: swapMensalTargetAuxId, data: sh.data, turnoId: sh.turnoId, turnoNome: sh.turnoNome })}
+                            style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"#F9FAFB",border:"1.5px solid #E5E7EB",borderRadius:10,padding:"10px 14px",cursor:"pointer",fontSize:13,fontWeight:600,color:"#111"}}
+                            onMouseEnter={e=>{e.currentTarget.style.background="#EFF6FF";e.currentTarget.style.borderColor="#2563EB"}}
+                            onMouseLeave={e=>{e.currentTarget.style.background="#F9FAFB";e.currentTarget.style.borderColor="#E5E7EB"}}>
+                            <span style={{fontSize:15,fontWeight:800}}>{sh.turnoNome}</span>
+                            <span style={{fontSize:11,color:"#9CA3AF",fontWeight:500}}>{dayLabel}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  /* Passo 3 — confirmação */
+                  <>
+                    <div style={{fontSize:11,fontWeight:700,color:"#9CA3AF",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:14}}>Passo 3 — Confirmar Troca</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      {[
+                        { aux: sourceAux, turno: swapMensalTargetShift.turnoNome, data: swapMensalSource.data },
+                        { aux: targetAux, turno: swapMensalSource.turnoNome, data: swapMensalTargetShift.data },
+                      ].map((item, i) => {
+                        const dayNum = parseInt(item.data.split("-")[2])
+                        const dayLabel = `${dayNum} ${DIAS_PT[getDay(new Date(year, month, dayNum))]}`
+                        return (
+                          <div key={i} style={{background:"#F0F9FF",border:"1.5px solid #BAE6FD",borderRadius:12,padding:"12px 16px"}}>
+                            <div style={{fontWeight:700,fontSize:13,color:"#0C4A6E"}}>{item.aux?.nome}</div>
+                            <div style={{fontSize:12,color:"#0369A1",marginTop:3}}>Faz Turno <strong>{item.turno}</strong> no dia <strong>{dayLabel}</strong></div>
+                          </div>
+                        )
+                      })}
+                      <div style={{textAlign:"center",fontSize:18,color:"#9CA3AF"}}>↕</div>
+                    </div>
+                  </>
+                )}
+              </div>
+              {/* footer */}
+              {swapMensalTargetShift && (
+                <div style={{padding:"14px 22px",borderTop:"1px solid #F0F0F0",display:"flex",gap:8,justifyContent:"flex-end"}}>
+                  <button onClick={()=>setSwapMensalTargetShift(null)} style={{background:"#F4F4F5",color:"#374151",border:"none",borderRadius:9,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:600}}>Voltar</button>
+                  <button onClick={()=>executeMensalSwap(swapMensalSource!, swapMensalTargetShift!)} disabled={swappingMensal}
+                    style={{background:swappingMensal?"#E5E7EB":"#2563EB",color:swappingMensal?"#9CA3AF":"#fff",border:"none",borderRadius:9,padding:"8px 20px",cursor:swappingMensal?"not-allowed":"pointer",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
+                    {swappingMensal?<><Loader2 size={13} style={{animation:"spin 1s linear infinite"}}/>A trocar…</>:<><ArrowLeftRight size={13}/>Confirmar Troca</>}
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        )
+      })()}
+
+      {/* Ctrl+Click swap confirm (Mensal) */}
+      {swapMensalConfirmOpen && swapMensalSource && swapMensalTargetShift && (() => {
+        const auxA = auxiliares.find(a => a.id === swapMensalSource.auxId)
+        const auxB = auxiliares.find(a => a.id === swapMensalTargetShift.auxId)
+        const dayA = parseInt(swapMensalSource.data.split("-")[2])
+        const dayB = parseInt(swapMensalTargetShift.data.split("-")[2])
+        const labelA = `${dayA} ${DIAS_PT[getDay(new Date(year, month, dayA))]}`
+        const labelB = `${dayB} ${DIAS_PT[getDay(new Date(year, month, dayB))]}`
+        return (
+          <>
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:62,backdropFilter:"blur(3px)",animation:"mFadeIn 0.15s ease"}} onClick={()=>setSwapMensalConfirmOpen(false)}/>
+            <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#fff",borderRadius:16,zIndex:63,width:380,maxWidth:"92vw",boxShadow:"0 24px 64px rgba(0,0,0,0.22)",padding:"1.75rem 1.5rem",animation:"mSlideUp 0.2s cubic-bezier(0.34,1.56,0.64,1)"}}>
+              <div style={{width:44,height:44,borderRadius:"50%",background:"#EFF6FF",border:"1px solid #BFDBFE",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 1rem"}}><ArrowLeftRight size={20} color="#2563EB"/></div>
+              <h3 style={{textAlign:"center",fontSize:15,fontWeight:700,margin:"0 0 1rem",color:"#111"}}>Confirmar Troca</h3>
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:"1.5rem"}}>
+                {[{aux:auxA,turno:swapMensalTargetShift.turnoNome,label:labelA},{aux:auxB,turno:swapMensalSource.turnoNome,label:labelB}].map((item,i)=>(
+                  <div key={i} style={{background:"#F0F9FF",border:"1.5px solid #BAE6FD",borderRadius:10,padding:"10px 14px"}}>
+                    <div style={{fontWeight:700,fontSize:13,color:"#0C4A6E"}}>{item.aux?.nome}</div>
+                    <div style={{fontSize:11,color:"#0369A1",marginTop:2}}>Faz Turno <strong>{item.turno}</strong> — {item.label}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>setSwapMensalConfirmOpen(false)} style={{flex:1,padding:"0.65rem",background:"#F4F4F5",border:"none",borderRadius:9,cursor:"pointer",fontSize:13,fontWeight:600,color:"#374151"}}>Cancelar</button>
+                <button onClick={()=>executeMensalSwap(swapMensalSource!, swapMensalTargetShift!)} disabled={swappingMensal}
+                  style={{flex:1,padding:"0.65rem",background:swappingMensal?"#E5E7EB":"#2563EB",border:"none",borderRadius:9,cursor:swappingMensal?"not-allowed":"pointer",fontSize:13,fontWeight:700,color:swappingMensal?"#9CA3AF":"#fff"}}>
+                  {swappingMensal?"A trocar…":"Trocar"}
+                </button>
+              </div>
+            </div>
+          </>
+        )
+      })()}
+
       <style>{`
         @keyframes mFadeIn{from{opacity:0}to{opacity:1}}
         @keyframes mSlideUp{from{opacity:0;transform:translate(-50%,-46%) scale(0.95)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
         @keyframes slideLeftIn{from{opacity:0;transform:translateX(100%)}to{opacity:1;transform:translateX(0)}}
         @keyframes cellFlash{0%{filter:brightness(1.9) saturate(1.5)}50%{filter:brightness(1.3) saturate(1.2)}100%{filter:brightness(1) saturate(1)}}
+        @keyframes swapFlash{0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,0)}25%,75%{box-shadow:0 0 0 4px rgba(37,99,235,0.55)}50%{box-shadow:0 0 0 6px rgba(37,99,235,0.85)}}
+        @keyframes spin{to{transform:rotate(360deg)}}
         
         /* Toast notification */
         @keyframes slideInUp {
