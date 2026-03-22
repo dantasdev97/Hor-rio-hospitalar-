@@ -1,6 +1,6 @@
 ---
-tags: [escala-semanal, postos, sincronização]
-updated: 2026-03-21
+tags: [escala-semanal, postos, sincronização, troca-turno]
+updated: 2026-03-22
 ---
 
 # 07 — Escala Semanal
@@ -112,6 +112,57 @@ Verifica **hard-blocks**:
 - Single: apaga apenas entrada semanal + entrada mensal correspondente
 - Multi: apaga todas as entradas da célula
 - `clearDerivedOverride()`: apaga entrada mensal derivada (para "limpar" semanal)
+
+---
+
+## 🔄 Troca de Turno (Swap)
+
+Permite trocar dois auxiliares entre postos/turnos. Dois mecanismos:
+
+### Mecanismo 1: Botão no Modal
+1. Clicar numa célula com auxiliar atribuído → modal mostra botão **"Trocar"**
+2. Clicar no botão → sub-vista de troca:
+   - **Passo 1**: Lista de auxiliares com turnos na semana
+   - **Passo 2**: Seleccionar turno do auxiliar alvo (cards com dia/turno/posto)
+   - **Passo 3**: Confirmação visual com preview da troca
+3. Confirmar → `executeSwap()` executa a troca com reverse sync
+
+### Mecanismo 2: Ctrl+Click Quick Swap
+1. Manter **Ctrl** pressionado e clicar célula com aux → selecciona (destaque azul)
+2. Ctrl+Click noutra célula com aux diferente → modal de confirmação
+3. Confirmar → troca automática
+4. Soltar Ctrl ou perder foco → limpa selecção
+
+### `executeSwap(source, target, targetAuxId)`
+Operação em 7 passos:
+1. DELETE AuxA da célula source (semanal)
+2. DELETE AuxB da célula target (semanal)
+3. INSERT AuxB na célula source
+4. INSERT AuxA na célula target
+5. Reverse sync mensal: AuxB no turno de source
+6. Reverse sync mensal: AuxA no turno de target
+7. Cleanup mensal entries antigas + refetch
+
+### `getAuxShiftsForWeek(auxId)`
+Retorna todos os turnos do auxiliar na semana actual (data, turnoLetra, posto, postoLabel).
+
+### Estado de Swap
+
+| State | Tipo | Propósito |
+|---|---|---|
+| `swapMode` | boolean | Modal em modo de troca |
+| `swapSourceCell` | {data, turnoLetra, posto, auxId} | Célula origem |
+| `swapTargetAuxId` | string | Aux alvo seleccionado |
+| `swapTargetCell` | {data, turnoLetra, posto} | Célula alvo seleccionada |
+| `swapConfirmOpen` | boolean | Modal confirmação Ctrl+Click |
+| `swapping` | boolean | Troca em curso |
+| `ctrlHeld` | boolean | Ctrl pressionado |
+| `ctrlSelectedCell` | {data, turnoLetra, posto, auxId} | Célula seleccionada via Ctrl |
+
+### Restrições
+- Trocas apenas em células single-person (não multi)
+- Não é possível trocar aux consigo mesmo
+- Ambos os sentidos reflectem na escala mensal
 
 ---
 

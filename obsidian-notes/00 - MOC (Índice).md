@@ -37,7 +37,7 @@ updated: 2026-03-22
 
 ### 03-paginas/
 - [[03-paginas/01 - Escala Mensal]] — Motor principal, geração automática, alertas
-- [[03-paginas/02 - Escala Semanal]] — Vista por postos, sincronização, regras
+- [[03-paginas/02 - Escala Semanal]] — Vista por postos, sincronização, regras, troca de turno
 - [[03-paginas/03 - Auxiliares]] — CRUD, disponibilidade, FDS
 - [[03-paginas/04 - Doutores]] — CRUD, associação de turnos
 - [[03-paginas/05 - Turnos]] — CRUD, cores, postos associados

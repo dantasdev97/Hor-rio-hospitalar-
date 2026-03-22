@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { format, startOfWeek, addDays, getDay, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { ChevronLeft, ChevronRight, Search, X, Check, FileDown, MessageCircle, Loader2, Trash2, RotateCcw, Printer, Loader, Info, AlertCircle, MoreVertical } from "lucide-react"
+import { ChevronLeft, ChevronRight, Search, X, Check, FileDown, MessageCircle, Loader2, Trash2, RotateCcw, Printer, Loader, Info, AlertCircle, MoreVertical, ArrowLeftRight, ChevronDown } from "lucide-react"
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 import html2canvas from "html2canvas"
@@ -160,6 +160,17 @@ export default function EscalaSemanal() {
   const searchRef = useRef<HTMLInputElement>(null)
   const tableRef = useRef<HTMLTableElement>(null)
 
+  // ── Swap / Troca de Turno state ──────────────────────────────────────────
+  const [swapMode, setSwapMode] = useState(false)
+  const [swapSourceCell, setSwapSourceCell] = useState<{ data:string; turnoLetra:TurnoLetra; posto:PostoKey; auxId:string }|null>(null)
+  const [swapTargetAuxId, setSwapTargetAuxId] = useState<string|null>(null)
+  const [swapTargetCell, setSwapTargetCell] = useState<{ data:string; turnoLetra:TurnoLetra; posto:PostoKey }|null>(null)
+  const [swapConfirmOpen, setSwapConfirmOpen] = useState(false)
+  const [swapping, setSwapping] = useState(false)
+  // Ctrl+Click quick swap
+  const [ctrlHeld, setCtrlHeld] = useState(false)
+  const [ctrlSelectedCell, setCtrlSelectedCell] = useState<{ data:string; turnoLetra:TurnoLetra; posto:PostoKey; auxId:string }|null>(null)
+
   const weekStart = startOfWeek(referenceDate, { weekStartsOn:1 })
   const weekDays  = Array.from({ length:7 }, (_,i) => addDays(weekStart, i))
   const startDate = format(weekDays[0],"yyyy-MM-dd")
@@ -251,6 +262,21 @@ export default function EscalaSemanal() {
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [startDate, endDate])
+
+  // ── Ctrl key listener for quick swap ────────────────────────────────────
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Control") setCtrlHeld(true) }
+    const onKeyUp   = (e: KeyboardEvent) => { if (e.key === "Control") setCtrlHeld(false) }
+    const onBlur    = () => { setCtrlHeld(false); setCtrlSelectedCell(null) }
+    window.addEventListener("keydown", onKeyDown)
+    window.addEventListener("keyup", onKeyUp)
+    window.addEventListener("blur", onBlur)
+    return () => {
+      window.removeEventListener("keydown", onKeyDown)
+      window.removeEventListener("keyup", onKeyUp)
+      window.removeEventListener("blur", onBlur)
+    }
+  }, [])
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function turnoToLetra(t: TurnoComPostos): TurnoLetra | null {
@@ -585,6 +611,7 @@ export default function EscalaSemanal() {
   function closeDialog() {
     setDialogOpen(false); setSearch(""); setFilterTab("available")
     setSelOriginalId(""); setModalTouched(false)
+    closeSwapMode()
   }
 
   async function saveEscala() {
@@ -772,6 +799,189 @@ export default function EscalaSemanal() {
         await supabase.from("escalas").delete().eq("id", mensalEntry.id)
         setMensalEntries(p => p.filter(me => me.id !== mensalEntry.id))
       }
+    }
+  }
+
+  // ── Troca de Turno (Swap) ─────────────────────────────────────────────────
+
+  /** Returns all cells in the current week where a given aux is assigned */
+  function getAuxShiftsForWeek(auxId: string): { data:string; turnoLetra:TurnoLetra; posto:PostoKey; postoLabel:string }[] {
+    const shifts: { data:string; turnoLetra:TurnoLetra; posto:PostoKey; postoLabel:string }[] = []
+    for (const day of weekDays) {
+      const dateStr = format(day, "yyyy-MM-dd")
+      for (const turno of TURNOS) {
+        for (const p of POSTOS) {
+          if (!postoOpera(p.key as PostoKey, turno, dateStr)) continue
+          if (getPostoTipo(p.key as PostoKey, turno) !== "auxiliar") continue
+          if (isMultiPerson(p.key as PostoKey, turno)) {
+            const rows = getEscalas(dateStr, turno, p.key)
+            if (rows.some(r => r.auxiliar_id === auxId)) {
+              shifts.push({ data: dateStr, turnoLetra: turno, posto: p.key as PostoKey, postoLabel: p.label })
+            }
+          } else {
+            const esc = getEscala(dateStr, turno, p.key)
+            if (esc?.auxiliar_id === auxId) {
+              shifts.push({ data: dateStr, turnoLetra: turno, posto: p.key as PostoKey, postoLabel: p.label })
+            }
+          }
+        }
+      }
+    }
+    return shifts
+  }
+
+  function openSwapMode() {
+    if (!selCell || !selPersonId) return
+    setSwapSourceCell({ data: selCell.data, turnoLetra: selCell.turnoLetra, posto: selCell.posto, auxId: selPersonId })
+    setSwapTargetAuxId(null)
+    setSwapTargetCell(null)
+    setSwapMode(true)
+  }
+
+  function closeSwapMode() {
+    setSwapMode(false)
+    setSwapSourceCell(null)
+    setSwapTargetAuxId(null)
+    setSwapTargetCell(null)
+  }
+
+  function handleCtrlClick(data: string, turnoLetra: TurnoLetra, posto: PostoKey) {
+    // Find the aux assigned to this cell
+    const esc = getEscala(data, turnoLetra, posto)
+    const auxId = esc?.auxiliar_id
+    if (!auxId) return // empty cell — ignore
+
+    if (!ctrlSelectedCell) {
+      // First selection
+      setCtrlSelectedCell({ data, turnoLetra, posto, auxId })
+    } else {
+      // Second selection — trigger swap confirm
+      if (ctrlSelectedCell.data === data && ctrlSelectedCell.turnoLetra === turnoLetra && ctrlSelectedCell.posto === posto) {
+        // Same cell clicked — deselect
+        setCtrlSelectedCell(null)
+        return
+      }
+      if (ctrlSelectedCell.auxId === auxId) {
+        // Same aux — can't swap with self
+        setCtrlSelectedCell(null)
+        return
+      }
+      setSwapSourceCell(ctrlSelectedCell)
+      setSwapTargetCell({ data, turnoLetra, posto })
+      setSwapTargetAuxId(auxId)
+      setSwapConfirmOpen(true)
+      setCtrlSelectedCell(null)
+    }
+  }
+
+  /** Execute a swap: AuxA ↔ AuxB between two cells, with reverse sync to mensal */
+  async function executeSwap(
+    source: { data:string; turnoLetra:TurnoLetra; posto:PostoKey; auxId:string },
+    target: { data:string; turnoLetra:TurnoLetra; posto:PostoKey },
+    targetAuxId: string
+  ) {
+    setSwapping(true)
+    try {
+      const auxA = source.auxId
+      const auxB = targetAuxId
+
+      // 1. Delete AuxA from source cell (semanal)
+      const escA = getEscala(source.data, source.turnoLetra, source.posto)
+      if (escA && !escA.id.startsWith("mensal_")) {
+        await supabase.from("escalas").delete().eq("id", escA.id)
+        setEscalas(p => p.filter(e => e.id !== escA.id))
+      }
+
+      // 2. Delete AuxB from target cell (semanal)
+      const escB = getEscala(target.data, target.turnoLetra, target.posto)
+      if (escB && !escB.id.startsWith("mensal_")) {
+        await supabase.from("escalas").delete().eq("id", escB.id)
+        setEscalas(p => p.filter(e => e.id !== escB.id))
+      }
+
+      // 3. Insert AuxB into source cell
+      const payloadSource = { data:source.data, posto:source.posto, turno_letra:source.turnoLetra, tipo_escala:"semanal", status:"alocado", auxiliar_id:auxB, doutor_id:null }
+      const { data:rowsS } = await supabase.from("escalas").insert(payloadSource).select("id")
+      if (rowsS?.length) {
+        const nr: EscalaRow = { id:rowsS[0].id, ...payloadSource }
+        setEscalas(p => [...p, nr])
+      }
+
+      // 4. Insert AuxA into target cell
+      const payloadTarget = { data:target.data, posto:target.posto, turno_letra:target.turnoLetra, tipo_escala:"semanal", status:"alocado", auxiliar_id:auxA, doutor_id:null }
+      const { data:rowsT } = await supabase.from("escalas").insert(payloadTarget).select("id")
+      if (rowsT?.length) {
+        const nr: EscalaRow = { id:rowsT[0].id, ...payloadTarget }
+        setEscalas(p => [...p, nr])
+      }
+
+      // 5. Reverse sync mensal: AuxB at source date+turno
+      const turnoSource = turnosData.find(t =>
+        t.postos.includes(source.posto) && turnoToLetra(t) === source.turnoLetra
+      ) ?? turnosData.find(t => turnoToLetra(t) === source.turnoLetra)
+      if (turnoSource) {
+        // Remove old mensal for AuxA at source
+        const oldMensalA = mensalEntries.find(me =>
+          me.auxiliar_id === auxA && me.data === source.data && me.turno_id === turnoSource.id
+        )
+        if (oldMensalA) {
+          await supabase.from("escalas").delete().eq("id", oldMensalA.id)
+        }
+        // Create mensal for AuxB at source
+        const existingMensalB = mensalEntries.find(me =>
+          me.auxiliar_id === auxB && me.data === source.data && me.turno_id === turnoSource.id
+        )
+        if (!existingMensalB) {
+          await supabase.from("escalas").insert({
+            auxiliar_id: auxB, data: source.data,
+            tipo_escala: "mensal", turno_id: turnoSource.id, status: "alocado"
+          })
+        }
+      }
+
+      // 6. Reverse sync mensal: AuxA at target date+turno
+      const turnoTarget = turnosData.find(t =>
+        t.postos.includes(target.posto) && turnoToLetra(t) === target.turnoLetra
+      ) ?? turnosData.find(t => turnoToLetra(t) === target.turnoLetra)
+      if (turnoTarget) {
+        // Remove old mensal for AuxB at target
+        const oldMensalB = mensalEntries.find(me =>
+          me.auxiliar_id === auxB && me.data === target.data && me.turno_id === turnoTarget.id
+        )
+        if (oldMensalB) {
+          await supabase.from("escalas").delete().eq("id", oldMensalB.id)
+        }
+        // Create mensal for AuxA at target
+        const existingMensalA = mensalEntries.find(me =>
+          me.auxiliar_id === auxA && me.data === target.data && me.turno_id === turnoTarget.id
+        )
+        if (!existingMensalA) {
+          await supabase.from("escalas").insert({
+            auxiliar_id: auxA, data: target.data,
+            tipo_escala: "mensal", turno_id: turnoTarget.id, status: "alocado"
+          })
+        }
+      }
+
+      // 7. Refresh mensal entries
+      await refetchMensalEntries()
+
+      // Close modals and show success
+      setSwapConfirmOpen(false)
+      closeSwapMode()
+      closeDialog()
+      const nomeA = auxiliares.find(a => a.id === auxA)?.nome ?? "?"
+      const nomeB = auxiliares.find(a => a.id === auxB)?.nome ?? "?"
+      setToastMsg(`✅ Troca realizada: ${getFirstName(nomeA)} ↔ ${getFirstName(nomeB)}`)
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 3000)
+    } catch {
+      setToastMsg("❌ Erro ao realizar troca. Dados recarregados.")
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 3000)
+      fetchAll()
+    } finally {
+      setSwapping(false)
     }
   }
 
@@ -1447,22 +1657,33 @@ export default function EscalaSemanal() {
                         esc?.auxiliar_id === highlightAuxId ||
                         (isDouble && getEscalas(dateStr, turno, p.key as PostoKey).some(r => r.auxiliar_id === highlightAuxId))
                       )
+                      // Ctrl+Click swap highlight
+                      const isCtrlSelected = ctrlSelectedCell &&
+                        ctrlSelectedCell.data === dateStr &&
+                        ctrlSelectedCell.turnoLetra === turno &&
+                        ctrlSelectedCell.posto === (p.key as PostoKey)
                       return(
                         <td key={p.key}
-                          onClick={opera ? ()=>openCell(dateStr,turno,p.key as PostoKey) : undefined}
+                          onClick={opera ? () => {
+                            if (ctrlHeld && !isDouble && !isDocCell) {
+                              handleCtrlClick(dateStr, turno, p.key as PostoKey)
+                            } else {
+                              openCell(dateStr, turno, p.key as PostoKey)
+                            }
+                          } : undefined}
                           title={!opera
                             ? "Posto não opera neste turno/dia"
                             : cellName
-                              ? `${cellName}${derived?" (da escala mensal)":""}${temRestr?" ⚠️ restrição ativa":""}`
+                              ? `${cellName}${derived?" (da escala mensal)":""}${temRestr?" ⚠️ restrição ativa":""}${ctrlHeld?" — Ctrl+Click para trocar":""}`
                               : isDocCell ? "Clique para atribuir Doutor" : "Clique para atribuir"}
                           style={{ ...cellBase,
-                            backgroundColor: isHighlighted ? "#DBEAFE" : !opera ? "#E5E7EB" : p.bg,
+                            backgroundColor: isCtrlSelected ? "#DBEAFE" : isHighlighted ? "#DBEAFE" : !opera ? "#E5E7EB" : p.bg,
                             opacity: !opera ? 0.5 : 1,
                             fontStyle: placeholder ? "italic" : "normal",
                             color: placeholder ? "#9CA3AF" : "inherit",
-                            cursor: !opera ? "not-allowed" : "pointer",
-                            border: temRestr ? "2px solid #EF4444" : isHighlighted ? "2px solid #3B82F6" : B,
-                            boxShadow: isHighlighted ? "inset 0 0 0 1px #93C5FD" : undefined }}
+                            cursor: !opera ? "not-allowed" : ctrlHeld && cellName && !isDouble && !isDocCell ? "crosshair" : "pointer",
+                            border: isCtrlSelected ? "2px solid #2563EB" : temRestr ? "2px solid #EF4444" : isHighlighted ? "2px solid #3B82F6" : B,
+                            boxShadow: isCtrlSelected ? "inset 0 0 0 1px #93C5FD" : isHighlighted ? "inset 0 0 0 1px #93C5FD" : undefined }}
                           onMouseEnter={opera ? e=>(e.currentTarget.style.filter="brightness(0.91)") : undefined}
                           onMouseLeave={opera ? e=>(e.currentTarget.style.filter="brightness(1)") : undefined}>
                           {opera ? (cellName || placeholder || "") : "—"}
@@ -1516,6 +1737,134 @@ export default function EscalaSemanal() {
               </div>
             </div>
 
+            {/* ── Swap mode sub-view ── */}
+            {swapMode && swapSourceCell ? (() => {
+              const sourceAuxNome = auxiliares.find(a => a.id === swapSourceCell.auxId)?.nome ?? "?"
+              const sourcePostoLabel = postoInfo(swapSourceCell.posto)?.label ?? swapSourceCell.posto
+              const sourceDayIdx = weekDays.findIndex(d => format(d,"yyyy-MM-dd") === swapSourceCell.data)
+              const sourceDayLabel = sourceDayIdx >= 0 ? `${format(weekDays[sourceDayIdx],"d")} ${DIAS_PT[sourceDayIdx]}` : ""
+
+              // Step 1: select target aux
+              if (!swapTargetAuxId) {
+                const auxWithShifts = auxiliares
+                  .filter(a => a.id !== swapSourceCell.auxId)
+                  .map(a => ({ ...a, shifts: getAuxShiftsForWeek(a.id) }))
+                  .filter(a => a.shifts.length > 0)
+                return (
+                  <>
+                    <div style={{ padding:"8px 20px 4px",display:"flex",alignItems:"center",gap:6 }}>
+                      <button onClick={closeSwapMode} style={{ background:"none",border:"none",cursor:"pointer",padding:"4px",display:"flex",alignItems:"center",color:"#6B7280" }}>
+                        <ChevronLeft size={16}/>
+                      </button>
+                      <span style={{ fontSize:12,fontWeight:600,color:"#374151" }}>Trocar turno de <strong>{getFirstName(sourceAuxNome)}</strong> ({sourceDayLabel} {swapSourceCell.turnoLetra} {sourcePostoLabel})</span>
+                    </div>
+                    <div style={{ padding:"4px 20px 8px" }}>
+                      <div style={{ fontSize:11,color:"#9CA3AF" }}>Selecione o auxiliar para trocar:</div>
+                    </div>
+                    <div style={{ maxHeight:"300px",overflowY:"auto",padding:"8px" }}>
+                      {auxWithShifts.length === 0 ? (
+                        <div style={{ padding:"24px 16px",textAlign:"center",fontSize:"13px",color:"#AAA" }}>Nenhum auxiliar com turnos esta semana.</div>
+                      ) : auxWithShifts.map(a => (
+                        <button key={a.id} onClick={() => setSwapTargetAuxId(a.id)}
+                          style={{ width:"100%",display:"flex",alignItems:"center",gap:"12px",padding:"9px 12px",borderRadius:"10px",border:"none",cursor:"pointer",textAlign:"left",backgroundColor:"transparent",transition:"background-color 0.12s" }}
+                          onMouseEnter={e => (e.currentTarget.style.backgroundColor = "#F7F8FA")}
+                          onMouseLeave={e => (e.currentTarget.style.backgroundColor = "transparent")}>
+                          <div style={{ width:"36px",height:"36px",borderRadius:"10px",backgroundColor:"#E8EEF2",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:700,flexShrink:0,color:"#5A7080" }}>{getInitials(a.nome)}</div>
+                          <div style={{ flex:1 }}>
+                            <div style={{ fontSize:"13px",fontWeight:500,color:"#333" }}>{a.nome}</div>
+                            <div style={{ fontSize:"10px",color:"#9CA3AF",marginTop:"1px" }}>{a.shifts.length} turno{a.shifts.length !== 1 ? "s" : ""} esta semana</div>
+                          </div>
+                          <ChevronDown size={14} color="#9CA3AF" style={{ transform:"rotate(-90deg)" }}/>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )
+              }
+
+              // Step 2: select target shift
+              if (!swapTargetCell) {
+                const targetAux = auxiliares.find(a => a.id === swapTargetAuxId)
+                const targetAuxNome = targetAux?.nome ?? "?"
+                const targetShifts = getAuxShiftsForWeek(swapTargetAuxId)
+                return (
+                  <>
+                    <div style={{ padding:"8px 20px 4px",display:"flex",alignItems:"center",gap:6 }}>
+                      <button onClick={() => setSwapTargetAuxId(null)} style={{ background:"none",border:"none",cursor:"pointer",padding:"4px",display:"flex",alignItems:"center",color:"#6B7280" }}>
+                        <ChevronLeft size={16}/>
+                      </button>
+                      <span style={{ fontSize:12,fontWeight:600,color:"#374151" }}>Turnos de <strong>{getFirstName(targetAuxNome)}</strong> — selecione para trocar</span>
+                    </div>
+                    <div style={{ maxHeight:"300px",overflowY:"auto",padding:"8px" }}>
+                      {targetShifts.map((s, i) => {
+                        const sDayIdx = weekDays.findIndex(d => format(d,"yyyy-MM-dd") === s.data)
+                        const sDayLabel = sDayIdx >= 0 ? `${format(weekDays[sDayIdx],"d")} ${DIAS_PT[sDayIdx]}` : s.data
+                        return (
+                          <button key={i} onClick={() => setSwapTargetCell({ data:s.data, turnoLetra:s.turnoLetra, posto:s.posto })}
+                            style={{ width:"100%",display:"flex",alignItems:"center",gap:"10px",padding:"10px 12px",borderRadius:"10px",border:"none",cursor:"pointer",textAlign:"left",backgroundColor:"transparent",transition:"background-color 0.12s" }}
+                            onMouseEnter={e => (e.currentTarget.style.backgroundColor = "#F0F7FF")}
+                            onMouseLeave={e => (e.currentTarget.style.backgroundColor = "transparent")}>
+                            <div style={{ width:"32px",height:"32px",borderRadius:"8px",backgroundColor:SHIFT_BG[s.turnoLetra],display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",fontWeight:700,flexShrink:0 }}>{s.turnoLetra}</div>
+                            <div style={{ flex:1 }}>
+                              <div style={{ fontSize:"13px",fontWeight:600,color:"#1A1A2E" }}>{sDayLabel} — Turno {s.turnoLetra}</div>
+                              <div style={{ fontSize:"11px",color:"#6B7280" }}>{s.postoLabel}</div>
+                            </div>
+                            <ArrowLeftRight size={14} color="#2563EB"/>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                )
+              }
+
+              // Step 3: Confirmation
+              const targetAuxNome = auxiliares.find(a => a.id === swapTargetAuxId)?.nome ?? "?"
+              const targetPostoLabel = postoInfo(swapTargetCell.posto)?.label ?? swapTargetCell.posto
+              const targetDayIdx = weekDays.findIndex(d => format(d,"yyyy-MM-dd") === swapTargetCell.data)
+              const targetDayLabel = targetDayIdx >= 0 ? `${format(weekDays[targetDayIdx],"d")} ${DIAS_PT[targetDayIdx]}` : ""
+              return (
+                <>
+                  <div style={{ padding:"8px 20px 4px",display:"flex",alignItems:"center",gap:6 }}>
+                    <button onClick={() => setSwapTargetCell(null)} style={{ background:"none",border:"none",cursor:"pointer",padding:"4px",display:"flex",alignItems:"center",color:"#6B7280" }}>
+                      <ChevronLeft size={16}/>
+                    </button>
+                    <span style={{ fontSize:12,fontWeight:600,color:"#374151" }}>Confirmar Troca</span>
+                  </div>
+                  <div style={{ padding:"12px 20px" }}>
+                    <div style={{ background:"#F0F7FF",border:"1px solid #BFDBFE",borderRadius:"12px",padding:"16px",display:"flex",flexDirection:"column",gap:"12px" }}>
+                      <div style={{ display:"flex",alignItems:"center",gap:"10px" }}>
+                        <div style={{ width:"36px",height:"36px",borderRadius:"10px",backgroundColor:"#2563EB",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:700,color:"#FFF" }}>{getInitials(sourceAuxNome)}</div>
+                        <div>
+                          <div style={{ fontSize:"13px",fontWeight:600,color:"#1A1A2E" }}>{getFirstName(sourceAuxNome)}</div>
+                          <div style={{ fontSize:"11px",color:"#6B7280" }}>{sourceDayLabel} — {swapSourceCell.turnoLetra} — {sourcePostoLabel}</div>
+                        </div>
+                      </div>
+                      <div style={{ display:"flex",alignItems:"center",justifyContent:"center" }}>
+                        <ArrowLeftRight size={20} color="#2563EB"/>
+                      </div>
+                      <div style={{ display:"flex",alignItems:"center",gap:"10px" }}>
+                        <div style={{ width:"36px",height:"36px",borderRadius:"10px",backgroundColor:"#2563EB",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:700,color:"#FFF" }}>{getInitials(targetAuxNome)}</div>
+                        <div>
+                          <div style={{ fontSize:"13px",fontWeight:600,color:"#1A1A2E" }}>{getFirstName(targetAuxNome)}</div>
+                          <div style={{ fontSize:"11px",color:"#6B7280" }}>{targetDayLabel} — {swapTargetCell.turnoLetra} — {targetPostoLabel}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ padding:"8px 20px 16px",display:"flex",gap:"8px",justifyContent:"flex-end" }}>
+                    <button onClick={closeSwapMode} style={{ background:"#F4F4F4",border:"none",borderRadius:"8px",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#555" }}>Cancelar</button>
+                    <button
+                      onClick={() => executeSwap(swapSourceCell, swapTargetCell, swapTargetAuxId)}
+                      disabled={swapping}
+                      style={{ background:"#2563EB",border:"none",borderRadius:"8px",padding:"7px 20px",cursor:swapping?"not-allowed":"pointer",fontSize:"12px",fontWeight:700,color:"#FFF",display:"flex",alignItems:"center",gap:"6px" }}>
+                      {swapping ? <><Loader size={13} className="animate-spin"/> A trocar…</> : <><ArrowLeftRight size={13}/> Confirmar Troca</>}
+                    </button>
+                  </div>
+                </>
+              )
+            })() : (
+            <>
             {/* Filter tabs */}
             {selCell?.tipo !== "doutor" && (
               <div style={{ display:"flex",gap:"6px",padding:"8px 20px 0" }}>
@@ -1652,6 +2001,15 @@ export default function EscalaSemanal() {
                   onMouseEnter={e=>{e.currentTarget.style.background="#FFF5F5";e.currentTarget.style.borderColor="#E57373"}}
                   onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#FFCDD2"}}>Limpar seleção</button>
               )}
+              {/* Swap button — visible when cell has an aux assigned and is single-person */}
+              {!isDouble && selCell?.tipo === "auxiliar" && (hasExisting || isDerived) && selPersonId && (
+                <button onClick={openSwapMode}
+                  style={{ background:"none",border:"1.5px solid #93C5FD",borderRadius:"8px",padding:"7px 14px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#2563EB",transition:"all 0.12s",display:"flex",alignItems:"center",gap:"5px" }}
+                  onMouseEnter={e=>{e.currentTarget.style.background="#EFF6FF";e.currentTarget.style.borderColor="#2563EB"}}
+                  onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#93C5FD"}}>
+                  <ArrowLeftRight size={13}/> Trocar
+                </button>
+              )}
               <button onClick={closeDialog} style={{ background:"#F4F4F4",border:"none",borderRadius:"8px",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#555",transition:"background 0.12s" }}
                 onMouseEnter={e=>(e.currentTarget.style.background="#E8E8E8")} onMouseLeave={e=>(e.currentTarget.style.background="#F4F4F4")}>Cancelar</button>
               {(() => {
@@ -1666,9 +2024,63 @@ export default function EscalaSemanal() {
                 )
               })()}
             </div>
+            </>
+            )}
           </div>
         </div>
       )}
+
+      {/* Ctrl+Click Swap Confirmation Modal */}
+      {swapConfirmOpen && swapSourceCell && swapTargetCell && swapTargetAuxId && (() => {
+        const nomeA = auxiliares.find(a => a.id === swapSourceCell.auxId)?.nome ?? "?"
+        const nomeB = auxiliares.find(a => a.id === swapTargetAuxId)?.nome ?? "?"
+        const postoA = postoInfo(swapSourceCell.posto)?.label ?? swapSourceCell.posto
+        const postoB = postoInfo(swapTargetCell.posto)?.label ?? swapTargetCell.posto
+        const dayIdxA = weekDays.findIndex(d => format(d,"yyyy-MM-dd") === swapSourceCell.data)
+        const dayIdxB = weekDays.findIndex(d => format(d,"yyyy-MM-dd") === swapTargetCell.data)
+        const dayA = dayIdxA >= 0 ? `${format(weekDays[dayIdxA],"d")} ${DIAS_PT[dayIdxA]}` : ""
+        const dayB = dayIdxB >= 0 ? `${format(weekDays[dayIdxB],"d")} ${DIAS_PT[dayIdxB]}` : ""
+        return (
+          <>
+            <div style={{ position:"fixed",inset:0,zIndex:100,background:"rgba(0,0,0,0.45)",backdropFilter:"blur(4px)",animation:"fadeIn 0.15s ease" }}
+              onClick={() => { setSwapConfirmOpen(false); setCtrlSelectedCell(null) }}/>
+            <div style={{ position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:101,width:380,maxWidth:"90vw",background:"#fff",borderRadius:16,boxShadow:"0 24px 64px rgba(0,0,0,0.22)",padding:"1.75rem 1.5rem",animation:"slideUp 0.22s cubic-bezier(0.34,1.56,0.64,1)" }}>
+              <div style={{ width:48,height:48,borderRadius:"50%",background:"#EFF6FF",border:"1px solid #BFDBFE",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 1rem" }}>
+                <ArrowLeftRight size={22} color="#2563EB"/>
+              </div>
+              <h3 style={{ textAlign:"center",fontSize:16,fontWeight:700,margin:"0 0 1rem",color:"#111" }}>Confirmar Troca de Turno</h3>
+              <div style={{ background:"#F0F7FF",border:"1px solid #BFDBFE",borderRadius:"12px",padding:"14px",marginBottom:"1.25rem" }}>
+                <div style={{ display:"flex",alignItems:"center",gap:"10px",marginBottom:"10px" }}>
+                  <div style={{ width:"32px",height:"32px",borderRadius:"8px",backgroundColor:"#2563EB",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",fontWeight:700,color:"#FFF" }}>{getInitials(nomeA)}</div>
+                  <div>
+                    <div style={{ fontSize:"13px",fontWeight:600 }}>{getFirstName(nomeA)}</div>
+                    <div style={{ fontSize:"11px",color:"#6B7280" }}>{dayA} — {swapSourceCell.turnoLetra} — {postoA}</div>
+                  </div>
+                </div>
+                <div style={{ display:"flex",alignItems:"center",justifyContent:"center",margin:"4px 0" }}>
+                  <ArrowLeftRight size={18} color="#2563EB"/>
+                </div>
+                <div style={{ display:"flex",alignItems:"center",gap:"10px",marginTop:"10px" }}>
+                  <div style={{ width:"32px",height:"32px",borderRadius:"8px",backgroundColor:"#2563EB",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",fontWeight:700,color:"#FFF" }}>{getInitials(nomeB)}</div>
+                  <div>
+                    <div style={{ fontSize:"13px",fontWeight:600 }}>{getFirstName(nomeB)}</div>
+                    <div style={{ fontSize:"11px",color:"#6B7280" }}>{dayB} — {swapTargetCell.turnoLetra} — {postoB}</div>
+                  </div>
+                </div>
+              </div>
+              <div style={{ display:"flex",gap:8 }}>
+                <button onClick={() => { setSwapConfirmOpen(false); setCtrlSelectedCell(null) }}
+                  style={{ flex:1,padding:"0.65rem",background:"#F4F4F5",border:"none",borderRadius:9,cursor:"pointer",fontSize:13,fontWeight:600,color:"#374151" }}>Cancelar</button>
+                <button onClick={() => executeSwap(swapSourceCell, swapTargetCell, swapTargetAuxId)}
+                  disabled={swapping}
+                  style={{ flex:1,padding:"0.65rem",background:"#2563EB",border:"none",borderRadius:9,cursor:swapping?"not-allowed":"pointer",fontSize:13,fontWeight:700,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",gap:"6px" }}>
+                  {swapping ? <><Loader size={13} className="animate-spin"/> A trocar…</> : <><ArrowLeftRight size={13}/> Trocar</>}
+                </button>
+              </div>
+            </div>
+          </>
+        )
+      })()}
 
       {/* Modal de Alertas */}
       {alertasModalOpen && (() => {
