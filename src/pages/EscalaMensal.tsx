@@ -208,6 +208,18 @@ export default function EscalaMensal() {
       return na - nb
     }), [auxiliares])
 
+  // Group auxiliaries by equipa (sorted by mecanografico within each group)
+  const EQUIPAS_ORDER = ['Equipa 1', 'Equipa 2', 'Equipa Transportes'] as const
+  const groupedAuxiliares = useMemo(() => {
+    const groups = EQUIPAS_ORDER.map(equipa => ({
+      equipa,
+      membros: sortedAuxiliares.filter(a => a.equipa === equipa)
+    })).filter(g => g.membros.length > 0)
+    const semEquipa = sortedAuxiliares.filter(a => !a.equipa)
+    if (semEquipa.length > 0) groups.push({ equipa: "Sem Equipa" as typeof EQUIPAS_ORDER[number], membros: semEquipa })
+    return groups
+  }, [sortedAuxiliares])
+
   // Alertas reactivos — recalcula sempre que escalas/auxiliares/turnos/semanais mudam
   const alertas = useMemo(() => loading ? [] : calcularAlertas(), [escalas, escalasSemanais, auxiliares, turnos, year, month, loading])
 
@@ -1367,35 +1379,49 @@ export default function EscalaMensal() {
               </tr>
             </thead>
             <tbody>
-              {sortedAuxiliares.map((aux,idx)=>{
-                const rowBg = idx%2===0?"#FFFFFF":"#FAFAFA"
-                return(
-                  <tr key={aux.id}>
-                    <td style={tdS("#EBEBEB",{position:"sticky",left:0,zIndex:10,fontWeight:700,fontSize:10,background:"#EBEBEB"})}>{aux.numero_mecanografico??""}</td>
-                    <td style={tdS("#EBEBEB",{position:"sticky",left:44,zIndex:10,whiteSpace:"nowrap",fontWeight:600,fontSize:10,textAlign:"left",paddingLeft:8,background:"#EBEBEB"})}>
-                      <div style={{display:"flex",alignItems:"center",gap:4}}>
-                        <button onClick={()=>setDrawerAux(aux)} style={{background:"none",border:"none",cursor:"pointer",fontWeight:600,fontSize:10,color:"#111827",padding:0,textAlign:"left"}} onMouseEnter={e=>(e.currentTarget.style.color="#2563EB")} onMouseLeave={e=>(e.currentTarget.style.color="#111827")}>{aux.nome}</button>
-                        <button onClick={e=>{e.stopPropagation();navegarParaSemanal(aux)}} title="Ver na escala semanal" style={{background:"none",border:"none",cursor:"pointer",padding:"1px 2px",display:"flex",alignItems:"center",opacity:0.45,flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.opacity="1"}} onMouseLeave={e=>{e.currentTarget.style.opacity="0.45"}}><CalendarDays size={11} color="#2563EB"/></button>
-                      </div>
+              {groupedAuxiliares.length === 0 ? (
+                <tr><td colSpan={days.length+2} style={{textAlign:"center",padding:32,color:"#9CA3AF",fontSize:13}}>Nenhum auxiliar registado.</td></tr>
+              ) : groupedAuxiliares.map(({equipa, membros}) => (
+                <>
+                  <tr key={`header-${equipa}`}>
+                    <td colSpan={days.length+2} style={{
+                      background:"#D9D9D9",fontWeight:700,textAlign:"center",fontSize:10,
+                      padding:"4px 0",borderTop:"2px solid #999",borderBottom:"1px solid #BBB",
+                      position:"sticky",left:0,letterSpacing:"0.05em",color:"#374151"
+                    }}>
+                      {equipa}
                     </td>
-                    {days.map(d=>{
-                      const e=getEscala(aux.id,d); const di=getCellDisplay(e, aux.id, d)
-                      const we=isWeekend(year,month,d)
-                      const bg=di?di.bg:we?"#E5E7EB":rowBg
-                      const fl=flashCells.has(`${aux.id}_${mkDateStr(d)}`)
-                      return(
-                        <td key={d} onClick={()=>openCell(aux.id,d)} title={di?.code??(di?.isSemanal?"(da escala semanal)":"") }
-                          style={{ border:`1px solid ${di?.isSemanal?"#6366F1":"#CCC"}`,padding:"2px 0",textAlign:"center",cursor:"pointer",background:bg,color:di?di.text:"#374151",fontWeight:di?700:400,fontSize:10,minWidth:30,userSelect:"none",transition:"filter 0.1s",animation:fl?"cellFlash 0.8s ease":"none",fontStyle:di?.isSemanal?"italic":"normal",opacity:di?.isSemanal?0.8:1 }}
-                          onMouseEnter={ev=>(ev.currentTarget.style.filter="brightness(0.88)")}
-                          onMouseLeave={ev=>(ev.currentTarget.style.filter="brightness(1)")}>
-                          {di?.code??""}
-                        </td>
-                      )
-                    })}
                   </tr>
-                )
-              })}
-              {sortedAuxiliares.length===0&&<tr><td colSpan={days.length+2} style={{textAlign:"center",padding:32,color:"#9CA3AF",fontSize:13}}>Nenhum auxiliar registado.</td></tr>}
+                  {membros.map((aux,idx)=>{
+                    const rowBg = idx%2===0?"#FFFFFF":"#FAFAFA"
+                    return(
+                      <tr key={aux.id}>
+                        <td style={tdS("#EBEBEB",{position:"sticky",left:0,zIndex:10,fontWeight:700,fontSize:10,background:"#EBEBEB"})}>{aux.numero_mecanografico??""}</td>
+                        <td style={tdS("#EBEBEB",{position:"sticky",left:44,zIndex:10,whiteSpace:"nowrap",fontWeight:600,fontSize:10,textAlign:"left",paddingLeft:8,background:"#EBEBEB"})}>
+                          <div style={{display:"flex",alignItems:"center",gap:4}}>
+                            <button onClick={()=>setDrawerAux(aux)} style={{background:"none",border:"none",cursor:"pointer",fontWeight:600,fontSize:10,color:"#111827",padding:0,textAlign:"left"}} onMouseEnter={e=>(e.currentTarget.style.color="#2563EB")} onMouseLeave={e=>(e.currentTarget.style.color="#111827")}>{aux.nome}</button>
+                            <button onClick={e=>{e.stopPropagation();navegarParaSemanal(aux)}} title="Ver na escala semanal" style={{background:"none",border:"none",cursor:"pointer",padding:"1px 2px",display:"flex",alignItems:"center",opacity:0.45,flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.opacity="1"}} onMouseLeave={e=>{e.currentTarget.style.opacity="0.45"}}><CalendarDays size={11} color="#2563EB"/></button>
+                          </div>
+                        </td>
+                        {days.map(d=>{
+                          const e=getEscala(aux.id,d); const di=getCellDisplay(e, aux.id, d)
+                          const we=isWeekend(year,month,d)
+                          const bg=di?di.bg:we?"#E5E7EB":rowBg
+                          const fl=flashCells.has(`${aux.id}_${mkDateStr(d)}`)
+                          return(
+                            <td key={d} onClick={()=>openCell(aux.id,d)} title={di?.code??(di?.isSemanal?"(da escala semanal)":"") }
+                              style={{ border:`1px solid ${di?.isSemanal?"#6366F1":"#CCC"}`,padding:"2px 0",textAlign:"center",cursor:"pointer",background:bg,color:di?di.text:"#374151",fontWeight:di?700:400,fontSize:10,minWidth:30,userSelect:"none",transition:"filter 0.1s",animation:fl?"cellFlash 0.8s ease":"none",fontStyle:di?.isSemanal?"italic":"normal",opacity:di?.isSemanal?0.8:1 }}
+                              onMouseEnter={ev=>(ev.currentTarget.style.filter="brightness(0.88)")}
+                              onMouseLeave={ev=>(ev.currentTarget.style.filter="brightness(1)")}>
+                              {di?.code??""}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    )
+                  })}
+                </>
+              ))}
             </tbody>
           </table>
         </div>

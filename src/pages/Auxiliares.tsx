@@ -19,11 +19,15 @@ import { AuxDrawer } from "@/components/AuxDrawer"
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
+const EQUIPAS = ['Equipa 1', 'Equipa 2', 'Equipa Transportes'] as const
+type EquipaType = typeof EQUIPAS[number]
+
 const schema = z.object({
   nome: z.string().min(1, "Nome é obrigatório"),
   email: z.string().email("Email inválido").or(z.literal("")),
   numero_mecanografico: z.string().optional(),
   contribuinte: z.string().optional(),
+  equipa: z.enum(['Equipa 1', 'Equipa 2', 'Equipa Transportes']).nullable().optional(),
 })
 type FormData = z.infer<typeof schema>
 type FilterMode = "all" | "available" | "unavailable"
@@ -76,6 +80,8 @@ export default function Auxiliares() {
   const [filter, setFilter]           = useState<FilterMode>("all")
   const [drawerAux, setDrawerAux]     = useState<Auxiliar | null>(null)
 
+  const [selectedEquipa, setSelectedEquipa] = useState<EquipaType | null>(null)
+
   const { register, handleSubmit, reset, formState:{ errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
   })
@@ -90,17 +96,19 @@ export default function Auxiliares() {
 
   function openNew() {
     setEditing(null)
-    reset({ nome:"", email:"", numero_mecanografico:"", contribuinte:"" })
+    setSelectedEquipa(null)
+    reset({ nome:"", email:"", numero_mecanografico:"", contribuinte:"", equipa: null })
     setDialogOpen(true)
   }
   function openEdit(aux: Auxiliar) {
     setEditing(aux)
-    reset({ nome:aux.nome, email:aux.email??"", numero_mecanografico:aux.numero_mecanografico??"", contribuinte:aux.contribuinte??"" })
+    setSelectedEquipa(aux.equipa ?? null)
+    reset({ nome:aux.nome, email:aux.email??"", numero_mecanografico:aux.numero_mecanografico??"", contribuinte:aux.contribuinte??"", equipa: aux.equipa ?? null })
     setDialogOpen(true)
   }
 
   async function onSubmit(data: FormData) {
-    const payload = { nome:data.nome, email:data.email||null, numero_mecanografico:data.numero_mecanografico||null, contribuinte:data.contribuinte||null }
+    const payload = { nome:data.nome, email:data.email||null, numero_mecanografico:data.numero_mecanografico||null, contribuinte:data.contribuinte||null, equipa: selectedEquipa }
     if (editing) await supabase.from("auxiliares").update(payload).eq("id",editing.id)
     else         await supabase.from("auxiliares").insert(payload)
     setDialogOpen(false)
@@ -287,6 +295,24 @@ export default function Auxiliares() {
             <div className="space-y-1.5">
               <Label htmlFor="contribuinte">NIF / Contribuinte</Label>
               <Input id="contribuinte" {...register("contribuinte")} placeholder="Ex: 123456789"/>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="equipa">Equipa</Label>
+              <select
+                id="equipa"
+                value={selectedEquipa ?? ""}
+                onChange={e => setSelectedEquipa((e.target.value as EquipaType) || null)}
+                style={{
+                  width:"100%", padding:"8px 10px", borderRadius:6, border:"1px solid #E5E7EB",
+                  fontSize:14, background:"#fff", color: selectedEquipa ? "#111827" : "#9CA3AF",
+                  outline:"none", cursor:"pointer"
+                }}
+              >
+                <option value="">Sem equipa</option>
+                {EQUIPAS.map(eq => (
+                  <option key={eq} value={eq}>{eq}</option>
+                ))}
+              </select>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={()=>setDialogOpen(false)}>Cancelar</Button>

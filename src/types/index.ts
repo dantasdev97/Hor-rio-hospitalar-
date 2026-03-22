@@ -6,6 +6,7 @@ export interface Auxiliar {
   contribuinte: string | null
   disponivel: boolean
   trabalha_fds: boolean
+  equipa: 'Equipa 1' | 'Equipa 2' | 'Equipa Transportes' | null
   created_at: string
 }
 
