@@ -777,7 +777,7 @@ export default function EscalaMensal() {
     const auxNocCount: Record<string, number> = Object.fromEntries(sortedAuxiliares.map(a => [a.id, 0]))
     // Fair distribution counter: how many shifts each aux has been pre-planned so far
     const auxPlanCount: Record<string, number> = Object.fromEntries(sortedAuxiliares.map(a => [a.id, 0]))
-    const nocMensalPlan = (cfg as typeof DEFAULT_CFG).maxTurnosNoturnosMes ?? DEFAULT_CFG.maxTurnosNoturnosMes
+    const nocMensalPlan = cfg.maxTurnosNoturnosMes
 
     for (const d of days) {
       const dateStr = mkDateStr(d)
