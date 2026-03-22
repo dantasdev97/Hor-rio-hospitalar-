@@ -3,7 +3,8 @@ import { NavLink, useNavigate } from "react-router-dom"
 import {
   CalendarDays, Calendar, Users, Clock, Stethoscope,
   Settings, X, Hospital, LogOut, Link2, UserCircle2,
-  Phone, Hash, Upload, CheckCircle2, Loader2, ChevronRight,
+  Phone, Hash, Upload, CheckCircle2, Loader2,
+  ChevronLeft, ChevronRight,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/contexts/AuthContext"
@@ -15,14 +16,36 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 
-const navItems = [
-  { to: "/escala-mensal",  label: "Escala Mensal",   icon: CalendarDays, color: "text-blue-400" },
-  { to: "/escala-semanal", label: "Escala Semanal",  icon: Calendar,     color: "text-cyan-400" },
-  { to: "/doutores",       label: "Doutores",         icon: Stethoscope,  color: "text-emerald-400" },
-  { to: "/auxiliares",     label: "Auxiliares",       icon: Users,        color: "text-violet-400" },
-  { to: "/turnos",         label: "Turnos",           icon: Clock,        color: "text-amber-400" },
-  { to: "/turno-postos",   label: "Turnos → Postos", icon: Link2,        color: "text-rose-400" },
-  { to: "/configuracoes",  label: "Configurações",   icon: Settings,     color: "text-gray-400" },
+// ─── Nav groups ───────────────────────────────────────────────────────────────
+
+const navGroups = [
+  {
+    label: "Horários",
+    items: [
+      { to: "/escala-mensal",  label: "Escala Mensal",  icon: CalendarDays },
+      { to: "/escala-semanal", label: "Escala Semanal", icon: Calendar },
+    ],
+  },
+  {
+    label: "Cadastro",
+    items: [
+      { to: "/doutores",   label: "Doutores",   icon: Stethoscope },
+      { to: "/auxiliares", label: "Auxiliares", icon: Users },
+    ],
+  },
+  {
+    label: "Gerenciamento",
+    items: [
+      { to: "/turnos",       label: "Turnos",          icon: Clock },
+      { to: "/turno-postos", label: "Turnos + Postos", icon: Link2 },
+    ],
+  },
+  {
+    label: "Sistema",
+    items: [
+      { to: "/configuracoes", label: "Configurações", icon: Settings },
+    ],
+  },
 ]
 
 interface SidebarProps {
@@ -30,7 +53,7 @@ interface SidebarProps {
   onClose?: () => void
 }
 
-// ─── Modal do perfil do coordenador ──────────────────────────────────────────
+// ─── Modal perfil ─────────────────────────────────────────────────────────────
 
 function PerfilModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { user } = useAuth()
@@ -78,11 +101,10 @@ function PerfilModal({ open, onClose }: { open: boolean; onClose: () => void }) 
         </DialogHeader>
 
         <div className="space-y-5 py-2">
-          {/* Foto */}
           <div className="flex flex-col items-center gap-3 animate-in slide-in-from-left duration-300 delay-100">
             <div
               onClick={() => fotoRef.current?.click()}
-              className="h-24 w-24 rounded-full border-2 border-dashed border-gray-200 flex items-center justify-center bg-gray-50 overflow-hidden cursor-pointer hover:border-primary-400 hover:bg-primary-50/30 transition-all group hover:scale-105 duration-200"
+              className="h-24 w-24 rounded-full border-2 border-dashed border-gray-200 flex items-center justify-center bg-gray-50 overflow-hidden cursor-pointer hover:border-primary-400 hover:bg-primary-50/40 hover:scale-105 transition-all duration-200 group"
             >
               {form.foto ? (
                 <img src={form.foto} alt="Foto" className="h-full w-full object-cover" />
@@ -152,6 +174,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { empresa, perfil } = useConfig()
   const navigate = useNavigate()
   const [perfilOpen, setPerfilOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
 
   async function handleSignOut() {
     await signOut()
@@ -164,141 +187,194 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
     <>
       {/* Mobile overlay */}
       {isOpen && (
-        <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden" onClick={onClose} />
+        <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm md:hidden" onClick={onClose} />
       )}
 
       {/* Sidebar */}
       <aside
         className={cn(
-          "fixed top-0 left-0 z-50 h-full w-64 flex flex-col transition-transform duration-300",
-          "bg-gray-950 border-r border-white/5",
+          "fixed top-0 left-0 z-50 h-full flex flex-col bg-white border-r border-gray-100 shadow-sm",
+          "transition-all duration-300 ease-in-out",
           "md:translate-x-0 md:static md:z-auto",
+          collapsed ? "w-[68px]" : "w-64",
           isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         )}
       >
-        {/* ── Header / Branding ─────────────────────────── */}
-        <div className="flex items-center justify-between px-4 py-4 border-b border-white/5">
-          <div className="flex items-center gap-3 min-w-0">
-            {/* Logo dinâmica: imagem da BD ou ícone padrão */}
-            <div className="h-9 w-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden">
+        {/* ── Header ─────────────────────────────────────── */}
+        <div className={cn(
+          "flex items-center border-b border-gray-100 shrink-0 overflow-hidden",
+          collapsed ? "px-3 py-4 justify-center" : "px-4 py-4 justify-between"
+        )}>
+          {/* Logo + nome */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="h-8 w-8 rounded-lg bg-primary-50 border border-primary-100 flex items-center justify-center shrink-0 overflow-hidden">
               {empresa.logo ? (
                 <img src={empresa.logo} alt="Logo" className="h-full w-full object-contain p-0.5" />
               ) : (
-                <Hospital className="h-5 w-5 text-blue-400" />
+                <Hospital className="h-4.5 w-4.5 text-primary-600" />
               )}
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-white leading-none truncate">
-                {empresa.nome.split(" ").slice(-1)[0] || "CHL"}
-              </p>
-              <p className="text-[10px] text-white/40 leading-none mt-0.5 truncate">
-                {empresa.departamento || "Imagiologia"}
-              </p>
-            </div>
+
+            {!collapsed && (
+              <div className="min-w-0 animate-in fade-in duration-200">
+                <p className="text-sm font-semibold text-gray-900 leading-none truncate">
+                  {empresa.nome.split(" ").slice(-1)[0] || "CHL"}
+                </p>
+                <p className="text-[10px] text-gray-400 leading-none mt-0.5 truncate">
+                  {empresa.departamento || "Imagiologia"}
+                </p>
+              </div>
+            )}
           </div>
-          <button
-            onClick={onClose}
-            className="md:hidden h-7 w-7 rounded-lg bg-white/5 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
-          >
-            <X className="h-4 w-4" />
-          </button>
+
+          {/* Fechar (mobile) */}
+          {!collapsed && (
+            <button
+              onClick={onClose}
+              className="md:hidden h-7 w-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all shrink-0"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
-        {/* ── Navigation ────────────────────────────────── */}
-        <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-          {navItems.map(({ to, label, icon: Icon, color }, idx) => (
-            <NavLink
-              key={to}
-              to={to}
-              onClick={onClose}
-              className={({ isActive }) =>
-                cn(
-                  "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
-                  "animate-in fade-in slide-in-from-left duration-300",
-                  isActive
-                    ? "bg-white/10 text-white shadow-lg shadow-black/20"
-                    : "text-white/50 hover:text-white hover:bg-white/5"
-                )
-              }
-              style={{ animationDelay: `${idx * 40}ms` }}
-            >
-              {({ isActive }) => (
-                <>
-                  <div className={cn(
-                    "h-7 w-7 rounded-lg flex items-center justify-center shrink-0 transition-all duration-200",
-                    isActive
-                      ? "bg-white/15 shadow-sm"
-                      : "bg-white/0 group-hover:bg-white/8"
-                  )}>
-                    <Icon className={cn("h-4 w-4 transition-all duration-200", isActive ? color : "text-white/40 group-hover:text-white/70")} />
-                  </div>
-                  <span className="flex-1 truncate">{label}</span>
-                  {isActive && (
-                    <ChevronRight className="h-3.5 w-3.5 text-white/30 shrink-0" />
-                  )}
-                </>
+        {/* ── Collapse toggle (desktop) ──────────────────── */}
+        <button
+          onClick={() => setCollapsed((v) => !v)}
+          title={collapsed ? "Expandir sidebar" : "Recolher sidebar"}
+          className={cn(
+            "hidden md:flex items-center justify-center",
+            "h-6 w-6 rounded-full bg-white border border-gray-200 shadow-sm",
+            "text-gray-400 hover:text-primary-600 hover:border-primary-300 hover:shadow-primary-100/50",
+            "transition-all duration-200 hover:scale-110",
+            "absolute -right-3 top-[52px] z-10"
+          )}
+        >
+          {collapsed
+            ? <ChevronRight className="h-3.5 w-3.5" />
+            : <ChevronLeft className="h-3.5 w-3.5" />
+          }
+        </button>
+
+        {/* ── Navigation ─────────────────────────────────── */}
+        <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3 px-2 space-y-4">
+          {navGroups.map(({ label, items }, gi) => (
+            <div key={label} className="space-y-0.5" style={{ animationDelay: `${gi * 60}ms` }}>
+              {/* Group label */}
+              {!collapsed && (
+                <p className="px-3 mb-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-widest animate-in fade-in duration-200">
+                  {label}
+                </p>
               )}
-            </NavLink>
+              {collapsed && gi > 0 && (
+                <div className="w-6 mx-auto border-t border-gray-100 mb-1.5" />
+              )}
+
+              {items.map(({ to, label: itemLabel, icon: Icon }, ii) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  onClick={onClose}
+                  title={collapsed ? itemLabel : undefined}
+                  className={({ isActive }) =>
+                    cn(
+                      "flex items-center rounded-lg text-sm font-medium transition-all duration-150",
+                      "animate-in fade-in slide-in-from-left duration-300",
+                      collapsed ? "justify-center px-0 py-2.5 mx-0" : "gap-3 px-3 py-2.5",
+                      isActive
+                        ? "bg-primary-50 text-primary-700 border-l-[3px] border-primary-500 rounded-l-none"
+                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 border-l-[3px] border-transparent"
+                    )
+                  }
+                  style={{ animationDelay: `${gi * 60 + ii * 40}ms` }}
+                >
+                  {({ isActive }) => (
+                    <>
+                      <Icon className={cn(
+                        "h-[18px] w-[18px] shrink-0 transition-colors",
+                        isActive ? "text-primary-600" : "text-gray-400"
+                      )} />
+                      {!collapsed && (
+                        <span className="truncate">{itemLabel}</span>
+                      )}
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
 
-        {/* ── Divider ───────────────────────────────────── */}
-        <div className="mx-4 border-t border-white/5" />
-
-        {/* ── Footer / Perfil ───────────────────────────── */}
-        <div className="p-3 space-y-1">
-          {/* Card do coordenador clicável */}
+        {/* ── Footer ─────────────────────────────────────── */}
+        <div className={cn(
+          "border-t border-gray-100 shrink-0",
+          collapsed ? "p-2 space-y-1" : "p-3 space-y-1"
+        )}>
+          {/* Perfil do coordenador */}
           {user && (
             <button
               onClick={() => setPerfilOpen(true)}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 transition-all duration-200 group text-left"
+              title={collapsed ? (perfil.nome || user.email || "Perfil") : undefined}
+              className={cn(
+                "w-full flex items-center rounded-xl hover:bg-gray-50 transition-all duration-150 group",
+                collapsed ? "justify-center p-2" : "gap-2.5 px-2.5 py-2"
+              )}
             >
-              {/* Avatar com foto ou inicial */}
-              <div className="h-8 w-8 rounded-full shrink-0 overflow-hidden ring-1 ring-white/10 transition-all group-hover:ring-white/20">
+              {/* Avatar */}
+              <div className="h-8 w-8 rounded-full shrink-0 overflow-hidden ring-1 ring-gray-200 group-hover:ring-primary-300 transition-all">
                 {perfil.foto ? (
                   <img src={perfil.foto} alt="Foto" className="h-full w-full object-cover" />
                 ) : (
-                  <div className="h-full w-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center">
+                  <div className="h-full w-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
                     <span className="text-xs font-bold text-white">{avatarInitial}</span>
                   </div>
                 )}
               </div>
 
-              {/* Nome + email */}
-              <div className="flex-1 min-w-0">
-                {perfil.nome ? (
-                  <>
-                    <p className="text-xs font-semibold text-white/80 truncate leading-none group-hover:text-white transition-colors">{perfil.nome}</p>
-                    <p className="text-[10px] text-white/30 truncate mt-0.5 group-hover:text-white/40 transition-colors">{user.email}</p>
-                  </>
-                ) : (
-                  <p className="text-xs text-white/40 truncate group-hover:text-white/60 transition-colors">{user.email}</p>
-                )}
-              </div>
-
-              <UserCircle2 className="h-3.5 w-3.5 text-white/20 group-hover:text-white/40 shrink-0 transition-colors" />
+              {!collapsed && (
+                <div className="flex-1 min-w-0 text-left animate-in fade-in duration-200">
+                  {perfil.nome ? (
+                    <>
+                      <p className="text-xs font-semibold text-gray-700 truncate leading-none group-hover:text-gray-900 transition-colors">
+                        {perfil.nome}
+                      </p>
+                      <p className="text-[10px] text-gray-400 truncate mt-0.5 group-hover:text-gray-500 transition-colors">
+                        {user.email}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-gray-500 truncate group-hover:text-gray-700 transition-colors">
+                      {user.email}
+                    </p>
+                  )}
+                </div>
+              )}
             </button>
           )}
 
           {/* Logout */}
           <button
             onClick={handleSignOut}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-white/30 hover:text-red-400 hover:bg-red-500/10 transition-all duration-200 group"
+            title={collapsed ? "Terminar sessão" : undefined}
+            className={cn(
+              "w-full flex items-center rounded-xl text-sm font-medium",
+              "text-gray-400 hover:text-red-600 hover:bg-red-50 transition-all duration-150 group",
+              collapsed ? "justify-center p-2" : "gap-2.5 px-2.5 py-2"
+            )}
           >
-            <div className="h-7 w-7 rounded-lg flex items-center justify-center shrink-0 bg-white/0 group-hover:bg-red-500/10 transition-all">
-              <LogOut className="h-4 w-4" />
-            </div>
-            Terminar sessão
+            <LogOut className="h-4 w-4 shrink-0" />
+            {!collapsed && <span className="animate-in fade-in duration-200">Terminar sessão</span>}
           </button>
 
-          {/* Version */}
-          <p className="text-[9px] text-white/15 text-center pt-1 tracking-wider uppercase">
-            {empresa.nome ? empresa.nome.split(" ").slice(-1)[0] : "CHL"} · v1.0
-          </p>
+          {/* Version — só quando expandido */}
+          {!collapsed && (
+            <p className="text-[9px] text-gray-300 text-center pt-0.5 tracking-wider uppercase animate-in fade-in duration-200">
+              {empresa.nome ? empresa.nome.split(" ").slice(-1)[0] : "CHL"} · v1.0
+            </p>
+          )}
         </div>
       </aside>
 
-      {/* Modal de perfil */}
       <PerfilModal open={perfilOpen} onClose={() => setPerfilOpen(false)} />
     </>
   )
