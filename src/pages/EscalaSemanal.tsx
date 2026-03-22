@@ -168,32 +168,38 @@ export default function EscalaSemanal() {
   // ── Fetch ─────────────────────────────────────────────────────────────────
   async function fetchAll() {
     setLoading(true)
-    const [{ data:a },{ data:d },{ data:e },{ data:m },{ data:t },{ data:r },{ data:abs }] = await Promise.all([
-      supabase.from("auxiliares").select("id,nome,trabalha_fds").eq("disponivel",true).order("nome"),
-      supabase.from("doutores").select("id,nome").order("nome"),
-      supabase.from("escalas").select("id,data,posto,turno_letra,auxiliar_id,doutor_id")
-        .eq("tipo_escala","semanal")
-        .gte("data",startDate).lte("data",endDate)
-        .not("posto","is",null).not("turno_letra","is",null),
-      supabase.from("escalas").select("id,data,auxiliar_id,turno_id")
-        .eq("tipo_escala","mensal")
-        .gte("data",startDate).lte("data",endDate)
-        .not("turno_id","is",null),
-      supabase.from("turnos").select("id,nome,horario_inicio,horario_fim,postos"),
-      supabase.from("restricoes").select("id,auxiliar_id,turno_id,posto,motivo,data_inicio,data_fim"),
-      supabase.from("escalas").select("id,data,auxiliar_id,codigo_especial")
-        .eq("tipo_escala","mensal")
-        .gte("data",startDate).lte("data",endDate)
-        .not("codigo_especial","is",null),
-    ])
-    setAuxiliares(a ?? [])
-    setDoutores(d ?? [])
-    setEscalas(e ?? [])
-    setMensalEntries(m ?? [])
-    setTurnosData((t ?? []).map(x => ({ ...x, postos: (x.postos as string[] | null) ?? [] })))
-    setRestricoes(r ?? [])
-    setAusenciasEntries(abs ?? [])
-    setLoading(false)
+    try {
+      const [{ data:a },{ data:d },{ data:e },{ data:m },{ data:t },{ data:r },{ data:abs }] = await Promise.all([
+        supabase.from("auxiliares").select("id,nome,trabalha_fds").eq("disponivel",true).order("nome"),
+        supabase.from("doutores").select("id,nome").order("nome"),
+        supabase.from("escalas").select("id,data,posto,turno_letra,auxiliar_id,doutor_id")
+          .eq("tipo_escala","semanal")
+          .gte("data",startDate).lte("data",endDate)
+          .not("posto","is",null).not("turno_letra","is",null),
+        supabase.from("escalas").select("id,data,auxiliar_id,turno_id")
+          .eq("tipo_escala","mensal")
+          .gte("data",startDate).lte("data",endDate)
+          .not("turno_id","is",null),
+        supabase.from("turnos").select("id,nome,horario_inicio,horario_fim,postos"),
+        supabase.from("restricoes").select("id,auxiliar_id,turno_id,posto,motivo,data_inicio,data_fim"),
+        supabase.from("escalas").select("id,data,auxiliar_id,codigo_especial")
+          .eq("tipo_escala","mensal")
+          .gte("data",startDate).lte("data",endDate)
+          .not("codigo_especial","is",null),
+      ])
+      setAuxiliares(a ?? [])
+      setDoutores(d ?? [])
+      setEscalas(e ?? [])
+      setMensalEntries(m ?? [])
+      setTurnosData((t ?? []).map(x => ({ ...x, postos: (x.postos as string[] | null) ?? [] })))
+      setRestricoes(r ?? [])
+      setAusenciasEntries(abs ?? [])
+    } catch (err) {
+      console.error("Erro ao carregar dados da escala semanal:", err)
+      alert("Erro ao carregar dados. Verifique a ligação à internet e tente novamente.")
+    } finally {
+      setLoading(false)
+    }
   }
 
   // Refetch rápido só das entradas mensais (triggado pelo Realtime)
