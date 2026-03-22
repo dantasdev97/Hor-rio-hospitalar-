@@ -153,9 +153,9 @@ function SystemCheckModal({ open, onClose }: { open: boolean; onClose: () => voi
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-md" aria-describedby={undefined}>
+      <DialogContent className="max-w-md animate-in fade-in zoom-in-95 duration-300" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 animate-in slide-in-from-top-2 duration-300">
             <Settings2 className="h-5 w-5 text-primary-600" />
             Verificação do Sistema
           </DialogTitle>
@@ -168,15 +168,15 @@ function SystemCheckModal({ open, onClose }: { open: boolean; onClose: () => voi
             </div>
           ) : (
             checks.map((check, i) => (
-              <div key={i} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50/80 px-3 py-2.5">
+              <div key={i} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gradient-to-r from-gray-50 to-gray-100/50 px-3 py-2.5 animate-in fade-in duration-300 transition-all hover:shadow-sm hover:border-gray-200" style={{ animationDelay: `${i * 50}ms` }}>
                 <div className="flex items-center gap-2.5 min-w-0">
                   {check.status === "pending" && <Loader2 className="h-4 w-4 animate-spin text-gray-400 shrink-0" />}
-                  {check.status === "ok"      && <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />}
-                  {check.status === "error"   && <XCircle className="h-4 w-4 text-red-500 shrink-0" />}
+                  {check.status === "ok"      && <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0 animate-in zoom-in duration-300" />}
+                  {check.status === "error"   && <XCircle className="h-4 w-4 text-red-500 shrink-0 animate-in zoom-in duration-300" />}
                   <span className="text-sm font-medium text-gray-700 truncate">{check.label}</span>
                 </div>
                 {check.detail && (
-                  <span className={`text-xs ml-2 shrink-0 font-mono ${check.status === "ok" ? "text-emerald-600" : "text-red-500"}`}>
+                  <span className={`text-xs ml-2 shrink-0 font-mono ${check.status === "ok" ? "text-emerald-600" : "text-red-500"} animate-in fade-in slide-in-from-right duration-300`}>
                     {check.detail}
                   </span>
                 )}
@@ -186,23 +186,23 @@ function SystemCheckModal({ open, onClose }: { open: boolean; onClose: () => voi
         </div>
 
         {done && (
-          <div className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium border ${
+          <div className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium border animate-in fade-in slide-in-from-bottom-2 duration-500 transition-all ${
             allOk
               ? "bg-emerald-50 text-emerald-800 border-emerald-100"
               : "bg-red-50 text-red-800 border-red-100"
           }`}>
             {allOk
-              ? <><CheckCircle2 className="h-4 w-4" /> Tudo em ordem! Sistema operacional.</>
-              : <><AlertTriangle className="h-4 w-4" /> {checks.filter(c => c.status === "error").length} problema(s) detetado(s).</>
+              ? <><CheckCircle2 className="h-4 w-4 animate-in zoom-in duration-300" /> Tudo em ordem! Sistema operacional.</>
+              : <><AlertTriangle className="h-4 w-4 animate-in zoom-in duration-300" /> {checks.filter(c => c.status === "error").length} problema(s) detetado(s).</>
             }
           </div>
         )}
 
-        <DialogFooter>
-          <Button variant="outline" onClick={runChecks} disabled={running}>
+        <DialogFooter className="animate-in fade-in duration-500 delay-200">
+          <Button variant="outline" onClick={runChecks} disabled={running} className="transition-all">
             {running ? <><Loader2 className="h-4 w-4 animate-spin mr-1.5" /> A verificar...</> : "Reverificar"}
           </Button>
-          <Button onClick={onClose}>Fechar</Button>
+          <Button onClick={onClose} className="transition-all">Fechar</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -242,8 +242,8 @@ function TabEmpresa() {
   return (
     <div className="space-y-5 max-w-2xl">
       {/* Logo */}
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-3 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
+      <Card className="overflow-hidden animate-in fade-in slide-in-from-left duration-500">
+        <CardHeader className="pb-3 bg-gradient-to-r from-primary-50/30 to-white border-b border-gray-100">
           <CardTitle className="text-sm font-semibold text-gray-700 flex items-center gap-2">
             <ImageIcon className="h-4 w-4 text-primary-600" /> Logotipo da Instituição
           </CardTitle>
@@ -253,25 +253,25 @@ function TabEmpresa() {
           <div className="flex items-start gap-5">
             <div
               onClick={() => fileRef.current?.click()}
-              className="h-24 w-36 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center bg-gray-50 overflow-hidden cursor-pointer hover:border-primary-400 hover:bg-primary-50/30 transition-all group"
+              className="h-24 w-36 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100/80 overflow-hidden cursor-pointer hover:border-primary-400 hover:bg-primary-50 hover:shadow-md transition-all duration-300 group transform hover:scale-105"
             >
               {config.logo ? (
-                <img src={config.logo} alt="Logo" className="h-full w-full object-contain p-2" />
+                <img src={config.logo} alt="Logo" className="h-full w-full object-contain p-2 transition-transform duration-300 group-hover:scale-110" />
               ) : (
                 <div className="text-center">
-                  <Hospital className="h-7 w-7 text-gray-300 mx-auto group-hover:text-primary-300 transition-colors" />
-                  <p className="text-[10px] text-gray-400 mt-1.5 group-hover:text-primary-400">Clique para carregar</p>
+                  <Hospital className="h-7 w-7 text-gray-300 mx-auto group-hover:text-primary-400 transition-all duration-300 group-hover:scale-125" />
+                  <p className="text-[10px] text-gray-400 mt-1.5 group-hover:text-primary-500">Clique para carregar</p>
                 </div>
               )}
             </div>
-            <div className="space-y-2.5 pt-1">
-              <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()} className="gap-1.5">
+            <div className="space-y-2.5 pt-1 animate-in fade-in slide-in-from-left duration-500 delay-100">
+              <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()} className="gap-1.5 transition-all hover:shadow-sm">
                 <Upload className="h-3.5 w-3.5" /> Carregar imagem
               </Button>
               {config.logo && (
                 <Button
                   variant="outline" size="sm"
-                  className="text-red-600 hover:text-red-700 hover:bg-red-50 hover:border-red-200 gap-1.5 flex"
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50 hover:border-red-200 gap-1.5 flex transition-all"
                   onClick={() => update("logo", null)}
                 >
                   Remover logo
@@ -285,45 +285,45 @@ function TabEmpresa() {
       </Card>
 
       {/* Dados da instituição */}
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-3 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
+      <Card className="overflow-hidden animate-in fade-in slide-in-from-left duration-500 delay-150">
+        <CardHeader className="pb-3 bg-gradient-to-r from-blue-50/30 to-white border-b border-gray-100">
           <CardTitle className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-primary-600" /> Dados da Instituição
+            <Building2 className="h-4 w-4 text-blue-600" /> Dados da Instituição
           </CardTitle>
           <CardDescription>Informações que aparecem nos cabeçalhos das escalas e relatórios</CardDescription>
         </CardHeader>
         <CardContent className="pt-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 animate-in fade-in duration-500 delay-200">
               <Label htmlFor="nome_hospital" className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
                 <Building2 className="h-3 w-3" /> Nome do Hospital / Instituição
               </Label>
-              <Input id="nome_hospital" value={config.nome} onChange={(e) => update("nome", e.target.value)} placeholder="Ex: Hospital Leiria CHL" className="h-9" />
+              <Input id="nome_hospital" value={config.nome} onChange={(e) => update("nome", e.target.value)} placeholder="Ex: Hospital Leiria CHL" className="h-9 transition-all focus:shadow-md" />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 animate-in fade-in duration-500 delay-[250ms]">
               <Label htmlFor="departamento" className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
                 <Hash className="h-3 w-3" /> Serviço / Departamento
               </Label>
-              <Input id="departamento" value={config.departamento} onChange={(e) => update("departamento", e.target.value)} placeholder="Ex: Imagiologia" className="h-9" />
+              <Input id="departamento" value={config.departamento} onChange={(e) => update("departamento", e.target.value)} placeholder="Ex: Imagiologia" className="h-9 transition-all focus:shadow-md" />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 animate-in fade-in duration-500 delay-300">
               <Label htmlFor="telefone" className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
                 <Phone className="h-3 w-3" /> Telefone
               </Label>
-              <Input id="telefone" value={config.telefone} onChange={(e) => update("telefone", e.target.value)} placeholder="Ex: 244 812 000" className="h-9" />
+              <Input id="telefone" value={config.telefone} onChange={(e) => update("telefone", e.target.value)} placeholder="Ex: 244 812 000" className="h-9 transition-all focus:shadow-md" />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 animate-in fade-in duration-500 delay-[350ms]">
               <Label htmlFor="email_inst" className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
                 <Mail className="h-3 w-3" /> Email institucional
               </Label>
-              <Input id="email_inst" type="email" value={config.email} onChange={(e) => update("email", e.target.value)} placeholder="Ex: geral@chln.min-saude.pt" className="h-9" />
+              <Input id="email_inst" type="email" value={config.email} onChange={(e) => update("email", e.target.value)} placeholder="Ex: geral@chln.min-saude.pt" className="h-9 transition-all focus:shadow-md" />
             </div>
           </div>
         </CardContent>
       </Card>
 
-      <div className="flex justify-end">
-        <Button onClick={handleSave} disabled={saving} className="min-w-[150px]">
+      <div className="flex justify-end animate-in fade-in slide-in-from-bottom duration-500 delay-300">
+        <Button onClick={handleSave} disabled={saving} className="min-w-[150px] transition-all hover:shadow-lg">
           {saving
             ? <><Loader2 className="h-4 w-4 animate-spin mr-1.5" /> A guardar...</>
             : saved
@@ -365,84 +365,100 @@ function TabHorarios() {
   return (
     <div className="space-y-5 max-w-2xl">
       {/* Regras de bloqueio */}
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-3 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
+      <Card className="overflow-hidden animate-in fade-in slide-in-from-left duration-500 hover:shadow-md transition-shadow">
+        <CardHeader className="pb-3 bg-gradient-to-r from-red-50/40 to-white border-b border-gray-100">
           <CardTitle className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4 text-primary-600" /> Regras de Bloqueio
+            <ShieldCheck className="h-4 w-4 text-red-600" /> Regras de Bloqueio
           </CardTitle>
           <CardDescription>Restrições automáticas aplicadas na geração de escalas</CardDescription>
         </CardHeader>
         <CardContent className="divide-y divide-gray-100 pt-1">
-          <SettingRow
-            label="Bloquear turnos consecutivos"
-            description="Impede que o mesmo auxiliar realize dois turnos seguidos sem descanso adequado"
-          >
-            <Switch checked={config.bloquearTurnosConsecutivos} onCheckedChange={() => toggle("bloquearTurnosConsecutivos")} />
-          </SettingRow>
-          <SettingRow
-            label="Horas mínimas de descanso"
-            description="Intervalo mínimo obrigatório entre o fim de um turno e o início do seguinte"
-          >
-            <NumberStepper value={config.horasDescansMinimas} onChange={(v) => setNum("horasDescansMinimas", v)} min={8} max={24} suffix="h" />
-          </SettingRow>
+          <div className="animate-in fade-in duration-500 delay-100">
+            <SettingRow
+              label="Bloquear turnos consecutivos"
+              description="Impede que o mesmo auxiliar realize dois turnos seguidos sem descanso adequado"
+            >
+              <Switch checked={config.bloquearTurnosConsecutivos} onCheckedChange={() => toggle("bloquearTurnosConsecutivos")} className="transition-all" />
+            </SettingRow>
+          </div>
+          <div className="animate-in fade-in duration-500 delay-150">
+            <SettingRow
+              label="Horas mínimas de descanso"
+              description="Intervalo mínimo obrigatório entre o fim de um turno e o início do seguinte"
+            >
+              <NumberStepper value={config.horasDescansMinimas} onChange={(v) => setNum("horasDescansMinimas", v)} min={8} max={24} suffix="h" />
+            </SettingRow>
+          </div>
         </CardContent>
       </Card>
 
       {/* Limites semanais */}
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-3 bg-gradient-to-r from-blue-50/60 to-white border-b border-gray-100">
+      <Card className="overflow-hidden animate-in fade-in slide-in-from-left duration-500 delay-75 hover:shadow-md transition-shadow">
+        <CardHeader className="pb-3 bg-gradient-to-r from-blue-50/40 to-white border-b border-gray-100">
           <CardTitle className="text-sm font-semibold text-gray-700 flex items-center gap-2">
             <CalendarDays className="h-4 w-4 text-blue-600" /> Limites Semanais
           </CardTitle>
           <CardDescription>Quotas máximas por auxiliar em cada semana</CardDescription>
         </CardHeader>
         <CardContent className="divide-y divide-gray-100 pt-1">
-          <SettingRow label="Máximo de turnos por semana" description="Limite total de turnos que um auxiliar pode realizar numa semana">
-            <NumberStepper value={config.maxTurnosSemana} onChange={(v) => setNum("maxTurnosSemana", v)} min={1} max={7} />
-          </SettingRow>
-          <SettingRow label="Máximo de turnos noturnos por semana" description="Limite de turnos noturnos (ex: N5, T21+) por semana">
-            <NumberStepper value={config.maxTurnosNoturnos} onChange={(v) => setNum("maxTurnosNoturnos", v)} min={0} max={7} />
-          </SettingRow>
+          <div className="animate-in fade-in duration-500 delay-150">
+            <SettingRow label="Máximo de turnos por semana" description="Limite total de turnos que um auxiliar pode realizar numa semana">
+              <NumberStepper value={config.maxTurnosSemana} onChange={(v) => setNum("maxTurnosSemana", v)} min={1} max={7} />
+            </SettingRow>
+          </div>
+          <div className="animate-in fade-in duration-500 delay-200">
+            <SettingRow label="Máximo de turnos noturnos por semana" description="Limite de turnos noturnos (ex: N5, T21+) por semana">
+              <NumberStepper value={config.maxTurnosNoturnos} onChange={(v) => setNum("maxTurnosNoturnos", v)} min={0} max={7} />
+            </SettingRow>
+          </div>
         </CardContent>
       </Card>
 
       {/* Limites mensais */}
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-3 bg-gradient-to-r from-violet-50/60 to-white border-b border-gray-100">
+      <Card className="overflow-hidden animate-in fade-in slide-in-from-left duration-500 delay-150 hover:shadow-md transition-shadow">
+        <CardHeader className="pb-3 bg-gradient-to-r from-violet-50/40 to-white border-b border-gray-100">
           <CardTitle className="text-sm font-semibold text-gray-700 flex items-center gap-2">
             <CalendarDays className="h-4 w-4 text-violet-600" /> Limites Mensais
           </CardTitle>
           <CardDescription>Quotas máximas por auxiliar em cada mês</CardDescription>
         </CardHeader>
         <CardContent className="divide-y divide-gray-100 pt-1">
-          <SettingRow label="Máximo de turnos por mês" description="Limite total de turnos atribuíveis a um auxiliar num mês">
-            <NumberStepper value={config.maxTurnosMes} onChange={(v) => setNum("maxTurnosMes", v)} min={1} max={31} />
-          </SettingRow>
-          <SettingRow label="Máximo de turnos noturnos por mês" description="Limite de turnos noturnos por mês">
-            <NumberStepper value={config.maxTurnosNoturnosMes} onChange={(v) => setNum("maxTurnosNoturnosMes", v)} min={0} max={20} />
-          </SettingRow>
+          <div className="animate-in fade-in duration-500 delay-200">
+            <SettingRow label="Máximo de turnos por mês" description="Limite total de turnos atribuíveis a um auxiliar num mês">
+              <NumberStepper value={config.maxTurnosMes} onChange={(v) => setNum("maxTurnosMes", v)} min={1} max={31} />
+            </SettingRow>
+          </div>
+          <div className="animate-in fade-in duration-500 delay-250">
+            <SettingRow label="Máximo de turnos noturnos por mês" description="Limite de turnos noturnos por mês">
+              <NumberStepper value={config.maxTurnosNoturnosMes} onChange={(v) => setNum("maxTurnosNoturnosMes", v)} min={0} max={20} />
+            </SettingRow>
+          </div>
         </CardContent>
       </Card>
 
       {/* Alertas */}
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-3 bg-gradient-to-r from-amber-50/60 to-white border-b border-gray-100">
+      <Card className="overflow-hidden animate-in fade-in slide-in-from-left duration-500 delay-[225ms] hover:shadow-md transition-shadow">
+        <CardHeader className="pb-3 bg-gradient-to-r from-amber-50/40 to-white border-b border-gray-100">
           <CardTitle className="text-sm font-semibold text-gray-700 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-amber-600" /> Alertas e Substituições
           </CardTitle>
         </CardHeader>
         <CardContent className="divide-y divide-gray-100 pt-1">
-          <SettingRow label="Alertas de conflito" description="Mostra avisos quando são detetados conflitos de horário ou restrições violadas">
-            <Switch checked={config.alertasConflito} onCheckedChange={() => toggle("alertasConflito")} />
-          </SettingRow>
-          <SettingRow label="Permitir substituições urgentes" description="Permite atribuir auxiliares indisponíveis em situações de emergência">
-            <Switch checked={config.permitirSubstituicoes} onCheckedChange={() => toggle("permitirSubstituicoes")} />
-          </SettingRow>
+          <div className="animate-in fade-in duration-500 delay-250">
+            <SettingRow label="Alertas de conflito" description="Mostra avisos quando são detetados conflitos de horário ou restrições violadas">
+              <Switch checked={config.alertasConflito} onCheckedChange={() => toggle("alertasConflito")} className="transition-all" />
+            </SettingRow>
+          </div>
+          <div className="animate-in fade-in duration-500 delay-300">
+            <SettingRow label="Permitir substituições urgentes" description="Permite atribuir auxiliares indisponíveis em situações de emergência">
+              <Switch checked={config.permitirSubstituicoes} onCheckedChange={() => toggle("permitirSubstituicoes")} className="transition-all" />
+            </SettingRow>
+          </div>
         </CardContent>
       </Card>
 
-      <div className="flex justify-end">
-        <Button onClick={handleSave} disabled={saving} className="min-w-[150px]">
+      <div className="flex justify-end animate-in fade-in slide-in-from-bottom duration-500 delay-300">
+        <Button onClick={handleSave} disabled={saving} className="min-w-[150px] transition-all hover:shadow-lg">
           {saving
             ? <><Loader2 className="h-4 w-4 animate-spin mr-1.5" /> A guardar...</>
             : saved
@@ -460,8 +476,8 @@ function TabHorarios() {
 function TabSistema({ onCheckSystem }: { onCheckSystem: () => void }) {
   return (
     <div className="grid gap-4 md:grid-cols-2 max-w-2xl">
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-3 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
+      <Card className="overflow-hidden animate-in fade-in slide-in-from-left duration-500 hover:shadow-md transition-shadow">
+        <CardHeader className="pb-3 bg-gradient-to-r from-gray-50/60 to-white border-b border-gray-100">
           <div className="flex items-center gap-2">
             <Hospital className="h-4 w-4 text-primary-600" />
             <CardTitle className="text-sm font-semibold text-gray-700">Aplicação</CardTitle>
@@ -474,17 +490,17 @@ function TabSistema({ onCheckSystem }: { onCheckSystem: () => void }) {
             ["Versão", "1.0.0"],
             ["Stack",  "React 19 + Supabase"],
             ["Build",  "Vite 7"],
-          ].map(([label, val]) => (
-            <div key={label} className="flex justify-between items-center">
+          ].map(([label, val], idx) => (
+            <div key={label} className="flex justify-between items-center animate-in fade-in duration-500 transition-all" style={{ animationDelay: `${100 + idx * 75}ms` }}>
               <span className="text-gray-500">{label}</span>
-              <span className="text-xs font-mono bg-gray-100 px-2 py-0.5 rounded text-gray-700">{val}</span>
+              <span className="text-xs font-mono bg-gradient-to-r from-gray-100 to-gray-50 px-2 py-0.5 rounded text-gray-700 transition-all hover:shadow-sm">{val}</span>
             </div>
           ))}
         </CardContent>
       </Card>
 
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-3 bg-gradient-to-r from-emerald-50/60 to-white border-b border-gray-100">
+      <Card className="overflow-hidden animate-in fade-in slide-in-from-right duration-500 hover:shadow-md transition-shadow">
+        <CardHeader className="pb-3 bg-gradient-to-r from-emerald-50/40 to-white border-b border-gray-100">
           <div className="flex items-center gap-2">
             <Database className="h-4 w-4 text-emerald-600" />
             <CardTitle className="text-sm font-semibold text-gray-700">Base de Dados</CardTitle>
@@ -492,30 +508,30 @@ function TabSistema({ onCheckSystem }: { onCheckSystem: () => void }) {
           <CardDescription>Supabase (PostgreSQL)</CardDescription>
         </CardHeader>
         <CardContent className="pt-4 space-y-3 text-sm">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center animate-in fade-in duration-500 delay-100">
             <span className="text-gray-500">Projeto</span>
-            <span className="text-xs font-mono bg-gray-100 px-2 py-0.5 rounded text-gray-700 truncate max-w-[130px]">
+            <span className="text-xs font-mono bg-gray-100 px-2 py-0.5 rounded text-gray-700 truncate max-w-[130px] transition-all hover:shadow-sm">
               {import.meta.env.VITE_SUPABASE_URL?.split("//")[1]?.split(".")[0] ?? "—"}
             </span>
           </div>
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center animate-in fade-in duration-500 delay-150">
             <span className="text-gray-500">Estado</span>
             <span className="inline-flex items-center gap-1.5 text-emerald-700 font-medium text-xs">
               <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
               Ligado
             </span>
           </div>
-          <Separator />
-          <Button size="sm" variant="outline" className="w-full gap-1.5" onClick={onCheckSystem}>
+          <Separator className="my-1" />
+          <Button size="sm" variant="outline" className="w-full gap-1.5 animate-in fade-in duration-500 delay-200 transition-all hover:shadow-md" onClick={onCheckSystem}>
             <Settings2 className="h-3.5 w-3.5" /> Verificar sistema
           </Button>
         </CardContent>
       </Card>
 
-      <Card className="md:col-span-2 overflow-hidden">
-        <CardHeader className="pb-3 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
+      <Card className="md:col-span-2 overflow-hidden animate-in fade-in slide-in-from-bottom duration-500 delay-75 hover:shadow-md transition-shadow">
+        <CardHeader className="pb-3 bg-gradient-to-r from-purple-50/30 to-white border-b border-gray-100">
           <div className="flex items-center gap-2">
-            <Info className="h-4 w-4 text-primary-600" />
+            <Info className="h-4 w-4 text-purple-600" />
             <CardTitle className="text-sm font-semibold text-gray-700">Módulos Disponíveis</CardTitle>
           </div>
         </CardHeader>
@@ -530,10 +546,10 @@ function TabSistema({ onCheckSystem }: { onCheckSystem: () => void }) {
               { label: "Restrições de Horários",   icon: ShieldCheck },
               { label: "Export PDF",               icon: Info },
               { label: "Partilha WhatsApp",        icon: Info },
-            ].map(({ label, icon: Icon }) => (
-              <li key={label} className="flex items-center gap-2 text-sm text-gray-600">
-                <div className="h-6 w-6 rounded-md bg-primary-50 flex items-center justify-center shrink-0">
-                  <Icon className="h-3.5 w-3.5 text-primary-600" />
+            ].map(({ label, icon: Icon }, idx) => (
+              <li key={label} className="flex items-center gap-2 text-sm text-gray-600 animate-in fade-in duration-500 transition-all hover:text-primary-700 group cursor-pointer" style={{ animationDelay: `${150 + idx * 60}ms` }}>
+                <div className="h-6 w-6 rounded-md bg-primary-50/60 flex items-center justify-center shrink-0 transition-all group-hover:bg-primary-100 group-hover:scale-110">
+                  <Icon className="h-3.5 w-3.5 text-primary-600 transition-all" />
                 </div>
                 {label}
               </li>
@@ -552,32 +568,32 @@ export default function Configuracoes() {
 
   return (
     <div>
-      <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-6 animate-in fade-in slide-in-from-top duration-500">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Configurações</h1>
-          <p className="text-sm text-gray-500 mt-1">Gerir empresa, regras de horários e sistema</p>
+          <h1 className="text-2xl font-bold text-gray-900 animate-in fade-in slide-in-from-left duration-500">Configurações</h1>
+          <p className="text-sm text-gray-500 mt-1 animate-in fade-in slide-in-from-left duration-500 delay-100">Gerir empresa, regras de horários e sistema</p>
         </div>
-        <Button variant="outline" onClick={() => setCheckOpen(true)} className="gap-1.5">
+        <Button variant="outline" onClick={() => setCheckOpen(true)} className="gap-1.5 animate-in fade-in zoom-in-95 duration-500 delay-150 transition-all hover:shadow-md">
           <Settings2 className="h-4 w-4" /> Verificar Sistema
         </Button>
       </div>
 
-      <Tabs defaultValue="empresa">
-        <TabsList className="mb-5 bg-gray-100/80">
-          <TabsTrigger value="empresa" className="gap-1.5">
+      <Tabs defaultValue="empresa" className="animate-in fade-in duration-500 delay-200">
+        <TabsList className="mb-5 bg-gradient-to-r from-gray-100/80 to-white border border-gray-100 shadow-sm animate-in fade-in slide-in-from-bottom duration-500 delay-200">
+          <TabsTrigger value="empresa" className="gap-1.5 transition-all data-[state=active]:shadow-sm">
             <Building2 className="h-3.5 w-3.5" /> Empresa
           </TabsTrigger>
-          <TabsTrigger value="horarios" className="gap-1.5">
+          <TabsTrigger value="horarios" className="gap-1.5 transition-all data-[state=active]:shadow-sm">
             <Clock className="h-3.5 w-3.5" /> Horários
           </TabsTrigger>
-          <TabsTrigger value="sistema" className="gap-1.5">
+          <TabsTrigger value="sistema" className="gap-1.5 transition-all data-[state=active]:shadow-sm">
             <Database className="h-3.5 w-3.5" /> Sistema
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="empresa"><TabEmpresa /></TabsContent>
-        <TabsContent value="horarios"><TabHorarios /></TabsContent>
-        <TabsContent value="sistema"><TabSistema onCheckSystem={() => setCheckOpen(true)} /></TabsContent>
+        <TabsContent value="empresa" className="animate-in fade-in duration-300"><TabEmpresa /></TabsContent>
+        <TabsContent value="horarios" className="animate-in fade-in duration-300"><TabHorarios /></TabsContent>
+        <TabsContent value="sistema" className="animate-in fade-in duration-300"><TabSistema onCheckSystem={() => setCheckOpen(true)} /></TabsContent>
       </Tabs>
 
       <SystemCheckModal open={checkOpen} onClose={() => setCheckOpen(false)} />
