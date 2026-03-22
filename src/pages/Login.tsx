@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 
-// ─── Animated background mesh — purely decorative, no deps ───────────────────
+// ─── Animated background mesh ─────────────────────────────────────────────────
 function MeshBackground() {
   return (
     <div
@@ -14,14 +14,11 @@ function MeshBackground() {
         pointerEvents: "none",
       }}
     >
-      {/* deep gradient base */}
       <div style={{
         position: "absolute",
         inset: 0,
         background: "linear-gradient(135deg, #040d1a 0%, #071428 40%, #0a1f3d 70%, #061630 100%)",
       }} />
-
-      {/* animated orb 1 */}
       <div style={{
         position: "absolute",
         top: "-20%",
@@ -32,8 +29,6 @@ function MeshBackground() {
         background: "radial-gradient(circle, rgba(0,83,155,0.35) 0%, transparent 70%)",
         animation: "orbFloat1 12s ease-in-out infinite",
       }} />
-
-      {/* animated orb 2 */}
       <div style={{
         position: "absolute",
         bottom: "-15%",
@@ -44,15 +39,11 @@ function MeshBackground() {
         background: "radial-gradient(circle, rgba(0,143,200,0.2) 0%, transparent 70%)",
         animation: "orbFloat2 16s ease-in-out infinite",
       }} />
-
-      {/* subtle scan line texture */}
       <div style={{
         position: "absolute",
         inset: 0,
         backgroundImage: "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.012) 2px, rgba(255,255,255,0.012) 4px)",
       }} />
-
-      {/* vignette */}
       <div style={{
         position: "absolute",
         inset: 0,
@@ -75,7 +66,6 @@ function MeshBackground() {
   )
 }
 
-// ─── Cross / Hospital icon ─────────────────────────────────────────────────
 function HospitalCross({ size = 40 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 40 40" fill="none">
@@ -85,7 +75,6 @@ function HospitalCross({ size = 40 }: { size?: number }) {
   )
 }
 
-// ─── Eye icon ────────────────────────────────────────────────────────────────
 function EyeIcon({ open }: { open: boolean }) {
   return open ? (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -97,52 +86,6 @@ function EyeIcon({ open }: { open: boolean }) {
       <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
       <line x1="1" y1="1" x2="23" y2="23" />
     </svg>
-  )
-}
-
-// ─── Gallery placeholder slot ────────────────────────────────────────────────
-// Future: replace this section with <img> or <video> based on config
-function GalleryPlaceholder() {
-  return (
-    <div style={{
-      position: "absolute",
-      bottom: "2.5rem",
-      left: "2.5rem",
-      right: "2.5rem",
-      borderRadius: "12px",
-      border: "1px solid rgba(255,255,255,0.1)",
-      background: "rgba(255,255,255,0.04)",
-      backdropFilter: "blur(4px)",
-      padding: "1rem 1.25rem",
-      display: "flex",
-      alignItems: "center",
-      gap: "0.75rem",
-    }}>
-      <div style={{
-        width: 36,
-        height: 36,
-        borderRadius: 8,
-        background: "rgba(255,255,255,0.08)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-      }}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2">
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          <circle cx="8.5" cy="8.5" r="1.5" />
-          <polyline points="21 15 16 10 5 21" />
-        </svg>
-      </div>
-      <div>
-        <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.35)", fontFamily: "'DM Sans', sans-serif", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-          Galeria / Vídeo
-        </p>
-        <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.5)", fontFamily: "'DM Sans', sans-serif", marginTop: 1 }}>
-          Disponível em breve
-        </p>
-      </div>
-    </div>
   )
 }
 
@@ -161,7 +104,6 @@ export default function Login() {
   const emailRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    // trigger entrance animation
     const t = setTimeout(() => setMounted(true), 50)
     emailRef.current?.focus()
     return () => clearTimeout(t)
@@ -182,32 +124,20 @@ export default function Login() {
   }
 
   return (
-    <div style={{
-      display: "flex",
-      minHeight: "100vh",
-      fontFamily: "'DM Sans', sans-serif",
-    }}>
+    <div className="login-root">
 
-      {/* ── LEFT PANEL: Branding / Gallery ── */}
-      <div style={{
-        flex: "0 0 52%",
-        position: "relative",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "center",
-        padding: "3rem 3.5rem",
-        overflow: "hidden",
-
-        // entrance animation
-        opacity: mounted ? 1 : 0,
-        transform: mounted ? "none" : "translateX(-24px)",
-        transition: "opacity 0.7s cubic-bezier(0.16,1,0.3,1), transform 0.7s cubic-bezier(0.16,1,0.3,1)",
-      }}>
+      {/* ── LEFT PANEL: Branding (hidden on mobile) ── */}
+      <div
+        className="login-left"
+        style={{
+          opacity: mounted ? 1 : 0,
+          transform: mounted ? "none" : "translateX(-24px)",
+          transition: "opacity 0.7s cubic-bezier(0.16,1,0.3,1), transform 0.7s cubic-bezier(0.16,1,0.3,1)",
+        }}
+      >
         <MeshBackground />
 
-        {/* content over background */}
         <div style={{ position: "relative", zIndex: 1 }}>
-          {/* Logo mark */}
           <div style={{
             display: "inline-flex",
             alignItems: "center",
@@ -238,7 +168,6 @@ export default function Login() {
             </span>
           </div>
 
-          {/* Main heading */}
           <h1 style={{
             fontFamily: "'Cormorant Garamond', serif",
             fontSize: "clamp(2.4rem, 3.5vw, 3.2rem)",
@@ -265,47 +194,63 @@ export default function Login() {
             Unidade Local de Saúde da Região de Leiria, E.P.E.
           </p>
 
-          {/* Decorative divider */}
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "0.75rem",
-          }}>
-            <div style={{
-              width: 32,
-              height: 2,
-              background: "rgba(0,143,200,0.6)",
-              borderRadius: 2,
-            }} />
-            <div style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background: "rgba(0,143,200,0.4)",
-            }} />
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <div style={{ width: 32, height: 2, background: "rgba(0,143,200,0.6)", borderRadius: 2 }} />
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "rgba(0,143,200,0.4)" }} />
           </div>
         </div>
 
-        {/* Gallery placeholder — swap with real media in future */}
-        <GalleryPlaceholder />
+        {/* Bottom card */}
+        <div style={{
+          position: "absolute",
+          bottom: "2.5rem",
+          left: "2.5rem",
+          right: "2.5rem",
+          borderRadius: "12px",
+          border: "1px solid rgba(255,255,255,0.1)",
+          background: "rgba(255,255,255,0.04)",
+          backdropFilter: "blur(4px)",
+          padding: "1rem 1.25rem",
+          display: "flex",
+          alignItems: "center",
+          gap: "0.75rem",
+        }}>
+          <div style={{
+            width: 36,
+            height: 36,
+            borderRadius: 8,
+            background: "rgba(255,255,255,0.08)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <polyline points="21 15 16 10 5 21" />
+            </svg>
+          </div>
+          <div>
+            <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.35)", fontFamily: "'DM Sans', sans-serif", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              Galeria / Vídeo
+            </p>
+            <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.5)", fontFamily: "'DM Sans', sans-serif", marginTop: 1 }}>
+              Disponível em breve
+            </p>
+          </div>
+        </div>
       </div>
 
-      {/* ── RIGHT PANEL: Login form ── */}
-      <div style={{
-        flex: 1,
-        background: "#f8f9fb",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "2rem",
-        position: "relative",
-
-        // entrance animation (delayed)
-        opacity: mounted ? 1 : 0,
-        transform: mounted ? "none" : "translateX(20px)",
-        transition: "opacity 0.8s 0.15s cubic-bezier(0.16,1,0.3,1), transform 0.8s 0.15s cubic-bezier(0.16,1,0.3,1)",
-      }}>
-
+      {/* ── RIGHT PANEL: Form ── */}
+      <div
+        className="login-right"
+        style={{
+          opacity: mounted ? 1 : 0,
+          transform: mounted ? "none" : "translateY(20px)",
+          transition: "opacity 0.8s 0.15s cubic-bezier(0.16,1,0.3,1), transform 0.8s 0.15s cubic-bezier(0.16,1,0.3,1)",
+        }}
+      >
         {/* subtle grid texture */}
         <div style={{
           position: "absolute",
@@ -315,20 +260,32 @@ export default function Login() {
           pointerEvents: "none",
         }} />
 
-        <div style={{
-          width: "100%",
-          maxWidth: 400,
-          position: "relative",
-        }}>
-          {/* Card */}
-          <div style={{
-            background: "#ffffff",
-            borderRadius: 20,
-            padding: "2.5rem",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.05), 0 20px 60px rgba(0,50,120,0.08)",
-            border: "1px solid rgba(0,0,0,0.06)",
-          }}>
-            {/* Header */}
+        {/* Mobile-only top branding */}
+        <div className="login-mobile-brand">
+          <MeshBackground />
+          <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <div style={{
+              width: 40,
+              height: 40,
+              borderRadius: 10,
+              background: "rgba(0,143,200,0.3)",
+              border: "1px solid rgba(0,143,200,0.5)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}>
+              <HospitalCross size={22} />
+            </div>
+            <div>
+              <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#fff", fontFamily: "'DM Sans', sans-serif" }}>CHL</p>
+              <p style={{ margin: 0, fontSize: 11, color: "rgba(100,195,240,0.85)", fontFamily: "'DM Sans', sans-serif" }}>Imagiologia · Gestão de Horários</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Form card */}
+        <div className="login-form-wrapper">
+          <div className="login-card">
             <div style={{ marginBottom: "2rem" }}>
               <p style={{
                 margin: 0,
@@ -353,9 +310,8 @@ export default function Login() {
               </h2>
             </div>
 
-            {/* Form */}
             <form onSubmit={handleSubmit} noValidate>
-              {/* Email field */}
+              {/* Email */}
               <div style={{ marginBottom: "1.25rem" }}>
                 <label style={{
                   display: "block",
@@ -375,18 +331,9 @@ export default function Login() {
                   placeholder="nome@chl.min-saude.pt"
                   autoComplete="email"
                   required
+                  className="login-input"
                   style={{
-                    width: "100%",
-                    boxSizing: "border-box",
-                    padding: "0.75rem 1rem",
-                    fontSize: 14,
-                    color: "#0f1929",
-                    background: "#f8f9fb",
                     border: `1.5px solid ${error ? "#ef4444" : "#e5e7eb"}`,
-                    borderRadius: 10,
-                    outline: "none",
-                    transition: "border-color 0.2s, box-shadow 0.2s",
-                    fontFamily: "'DM Sans', sans-serif",
                   }}
                   onFocus={(e) => {
                     e.target.style.borderColor = "#009ed0"
@@ -401,7 +348,7 @@ export default function Login() {
                 />
               </div>
 
-              {/* Password field */}
+              {/* Password */}
               <div style={{ marginBottom: "1.5rem" }}>
                 <label style={{
                   display: "block",
@@ -421,18 +368,10 @@ export default function Login() {
                     placeholder="••••••••"
                     autoComplete="current-password"
                     required
+                    className="login-input"
                     style={{
-                      width: "100%",
-                      boxSizing: "border-box",
-                      padding: "0.75rem 2.75rem 0.75rem 1rem",
-                      fontSize: 14,
-                      color: "#0f1929",
-                      background: "#f8f9fb",
+                      paddingRight: "2.75rem",
                       border: `1.5px solid ${error ? "#ef4444" : "#e5e7eb"}`,
-                      borderRadius: 10,
-                      outline: "none",
-                      transition: "border-color 0.2s, box-shadow 0.2s",
-                      fontFamily: "'DM Sans', sans-serif",
                     }}
                     onFocus={(e) => {
                       e.target.style.borderColor = "#009ed0"
@@ -472,7 +411,7 @@ export default function Login() {
                 </div>
               </div>
 
-              {/* Error message */}
+              {/* Error */}
               {error && (
                 <div style={{
                   display: "flex",
@@ -494,29 +433,15 @@ export default function Login() {
                 </div>
               )}
 
-              {/* Submit button */}
+              {/* Submit */}
               <button
                 type="submit"
                 disabled={loading || !email || !password}
+                className="login-btn"
                 style={{
-                  width: "100%",
-                  padding: "0.8rem",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  fontFamily: "'DM Sans', sans-serif",
-                  letterSpacing: "0.02em",
-                  color: "#ffffff",
                   background: loading ? "#6b7280" : "linear-gradient(135deg, #007ab8 0%, #009ed0 100%)",
-                  border: "none",
-                  borderRadius: 10,
                   cursor: loading || !email || !password ? "not-allowed" : "pointer",
                   opacity: !email || !password ? 0.6 : 1,
-                  transition: "opacity 0.2s, transform 0.15s, box-shadow 0.2s",
-                  boxShadow: "0 4px 14px rgba(0,122,184,0.3)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "0.5rem",
                 }}
                 onMouseEnter={(e) => {
                   if (!loading && email && password) {
@@ -543,7 +468,6 @@ export default function Login() {
             </form>
           </div>
 
-          {/* Footer note */}
           <p style={{
             textAlign: "center",
             marginTop: "1.5rem",
@@ -556,7 +480,7 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Global keyframes */}
+      {/* Global styles */}
       <style>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
@@ -569,9 +493,131 @@ export default function Login() {
           80% { transform: translateX(3px); }
         }
 
-        /* Responsive: stack on mobile */
+        .login-root {
+          display: flex;
+          min-height: 100vh;
+          min-height: 100dvh;
+          font-family: 'DM Sans', sans-serif;
+          flex-direction: row;
+        }
+
+        /* LEFT PANEL */
+        .login-left {
+          flex: 0 0 52%;
+          position: relative;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          padding: 3rem 3.5rem;
+          overflow: hidden;
+        }
+
+        /* RIGHT PANEL */
+        .login-right {
+          flex: 1;
+          background: #f8f9fb;
+          display: flex;
+          flex-direction: column;
+          align-items: stretch;
+          justify-content: center;
+          position: relative;
+          overflow: hidden;
+        }
+
+        .login-mobile-brand {
+          display: none;
+          position: relative;
+          overflow: hidden;
+          padding: 1.5rem 1.25rem;
+          min-height: 110px;
+          align-items: center;
+        }
+
+        .login-form-wrapper {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: 2rem 1.25rem;
+        }
+
+        .login-card {
+          background: #ffffff;
+          border-radius: 20px;
+          padding: 2.5rem;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 20px 60px rgba(0,50,120,0.08);
+          border: 1px solid rgba(0,0,0,0.06);
+          width: 100%;
+          max-width: 400px;
+        }
+
+        .login-input {
+          width: 100%;
+          box-sizing: border-box;
+          padding: 0.75rem 1rem;
+          font-size: 14px;
+          color: #0f1929;
+          background: #f8f9fb;
+          border-radius: 10px;
+          outline: none;
+          transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+          font-family: 'DM Sans', sans-serif;
+        }
+
+        .login-btn {
+          width: 100%;
+          padding: 0.8rem;
+          font-size: 14px;
+          font-weight: 600;
+          font-family: 'DM Sans', sans-serif;
+          letter-spacing: 0.02em;
+          color: #ffffff;
+          border: none;
+          border-radius: 10px;
+          transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s;
+          box-shadow: 0 4px 14px rgba(0,122,184,0.3);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+        }
+
+        /* ─ MOBILE ─────────────────────────────────── */
         @media (max-width: 768px) {
-          .login-left { display: none !important; }
+          .login-root {
+            flex-direction: column;
+          }
+
+          .login-left {
+            display: none;
+          }
+
+          .login-right {
+            justify-content: flex-start;
+            background: #f8f9fb;
+          }
+
+          .login-mobile-brand {
+            display: flex;
+          }
+
+          .login-form-wrapper {
+            padding: 1.5rem 1.25rem 2rem;
+            justify-content: flex-start;
+          }
+
+          .login-card {
+            padding: 1.75rem 1.5rem;
+            border-radius: 16px;
+          }
+        }
+
+        /* ─ SMALL PHONES ─────────────────────────────── */
+        @media (max-width: 400px) {
+          .login-card {
+            padding: 1.5rem 1.25rem;
+          }
         }
       `}</style>
     </div>
