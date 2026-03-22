@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /home/user/Hor-rio-hospitalar- && BRANCH=$(git branch --show-current) && AHEAD=$(git rev-list --count origin/$BRANCH..HEAD 2>/dev/null || echo 0) && if [ \"$AHEAD\" -gt 0 ]; then git push -u origin $BRANCH 2>/dev/null && echo \"{\\\"systemMessage\\\": \\\"✅ Push automático: $AHEAD commit(s) enviado(s) para $BRANCH. Para produção: bash deploy.sh na tua máquina.\\\"}\" ; else echo \"{\\\"systemMessage\\\": \\\"ℹ️ Sem commits novos para enviar.\\\"}\"; fi",
+            "timeout": 30,
+            "statusMessage": "A sincronizar com o repositório..."
+          }
+        ]
+      }
+    ]
+  }
+}
