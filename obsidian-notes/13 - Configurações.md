@@ -1,6 +1,6 @@
 ---
-tags: [configurações, settings, empresa]
-updated: 2026-03-21
+tags: [configurações, settings, empresa, perfil, bd]
+updated: 2026-03-22
 ---
 
 # 13 — Configurações
@@ -11,41 +11,63 @@ updated: 2026-03-21
 ## 🎯 O Que Faz
 
 Página de configurações com 3 tabs:
-1. **Empresa** — Nome, departamento, logo, contactos
-2. **Horários** — Regras de escala e limites
+1. **Empresa** — Nome, departamento, logo, contactos (guardado na BD)
+2. **Horários** — Regras de escala e limites (guardado na BD)
 3. **Sistema** — Diagnóstico da base de dados e ambiente
 
 ---
 
-## 🏢 Tab: Empresa (cfg_empresa)
+## 🏗️ Arquitetura (atualizada 2026-03-22)
 
-Guardado em `localStorage` com a chave `cfg_empresa`.
+As configurações já **não usam localStorage**. São persistidas na BD via `ConfigContext`.
+
+```
+src/contexts/ConfigContext.tsx  ← contexto global
+├── Carrega da tabela `configuracoes` (BD)
+├── Carrega da tabela `perfil_coordenador` (BD)
+└── Expõe: empresa, horarios, perfil, saveEmpresa(), saveHorarios(), savePerfil()
+```
+
+O contexto é injetado em `App.tsx`:
+```tsx
+<AuthProvider>
+  <ConfigProvider>
+    <AppRoutes />
+  </ConfigProvider>
+</AuthProvider>
+```
+
+---
+
+## 🏢 Tab: Empresa
+
+Guardado na tabela `configuracoes` com chave `'empresa'` (JSONB).
 
 ```typescript
 interface EmpresaConfig {
   nome: string          // Default: "Hospital Leiria CHL"
   departamento: string  // Default: "Imagiologia"
-  telefone: string      // Default: ""
-  email: string         // Default: ""
-  logo: string | null   // Base64 da imagem, Default: null
+  telefone: string
+  email: string
+  logo: string | null   // Base64 da imagem
 }
 ```
 
-**Upload de Logo:**
-- Formatos aceites: PNG, JPG, SVG
-- Tamanho máximo: 2 MB
-- Armazenado como base64 no localStorage
+**Logo:**
+- Formato base64, máx. 2MB
+- Após guardar, reflete imediatamente na **sidebar** (logo dinâmica)
+- O nome do hospital aparece também no topo da sidebar
 
 ---
 
-## ⏰ Tab: Horários (cfg_horarios)
+## ⏰ Tab: Horários
 
-Guardado em `localStorage` com a chave `cfg_horarios`.
+Guardado na tabela `configuracoes` com chave `'horarios'` (JSONB).
 
 ```typescript
 interface HorariosConfig {
   bloquearTurnosConsecutivos: boolean  // Default: true
-  horasDescansMinimas: number          // Default: 11 (horas)
+  horasDescansMinimas: number          // Default: 11h
   maxTurnosSemana: number              // Default: 5
   maxTurnosNoturnos: number            // Default: 2 (por semana)
   alertasConflito: boolean             // Default: true
@@ -55,32 +77,24 @@ interface HorariosConfig {
 }
 ```
 
-### Validações dos Campos
-
-| Campo | Mínimo | Máximo |
-|---|---|---|
-| `horasDescansMinimas` | 8 | 24 |
-| `maxTurnosSemana` | 1 | 7 |
-| `maxTurnosNoturnos` | 0 | 7 |
-| `maxTurnosMes` | 1 | 31 |
-| `maxTurnosNoturnosMes` | 0 | 20 |
+**Reflete nas escalas:** `EscalaMensal` e `EscalaSemanal` lêem `horarios` via `useConfig()` — não há mais leitura direta de localStorage.
 
 ---
 
-## 🔧 Funções Helper
+## 👤 Perfil do Coordenador
+
+Guardado na tabela `perfil_coordenador` (1 registo por `auth.uid()`).
 
 ```typescript
-// Carregar config com fallback para defaults
-function loadConfig<T>(key: string, defaults: T): T {
-  const stored = localStorage.getItem(key)
-  return stored ? { ...defaults, ...JSON.parse(stored) } : defaults
-}
-
-// Guardar config
-function saveConfig<T>(key: string, value: T): void {
-  localStorage.setItem(key, JSON.stringify(value))
+interface PerfilCoordenador {
+  nome: string
+  telemovel: string
+  numero_mecanografico: string
+  foto: string | null  // base64
 }
 ```
+
+**Acesso:** Botão clicável no rodapé da sidebar → abre modal com formulário de perfil.
 
 ---
 
@@ -88,20 +102,48 @@ function saveConfig<T>(key: string, value: T): void {
 
 Verifica estado de cada tabela e variáveis de ambiente:
 
-| Item verificado | O Que Testa |
+| Item verificado              | O Que Testa                                    |
 |---|---|
-| Tabela `auxiliares` | SELECT count(*) — existe e acessível |
-| Tabela `turnos` | SELECT count(*) — existe e acessível |
-| Tabela `doutores` | SELECT count(*) — existe e acessível |
-| Tabela `restricoes` | SELECT count(*) — existe e acessível |
-| Tabela `escalas` | SELECT count(*) — existe e acessível |
-| `VITE_SUPABASE_URL` | `import.meta.env.VITE_SUPABASE_URL` definida |
-| `VITE_SUPABASE_ANON_KEY` | `import.meta.env.VITE_SUPABASE_ANON_KEY` definida |
+| Ligação ao Supabase          | SELECT do Supabase                             |
+| Tabela `auxiliares`          | count(*)                                       |
+| Tabela `turnos`              | count(*)                                       |
+| Tabela `doutores`            | count(*)                                       |
+| Tabela `restricoes`          | count(*)                                       |
+| Tabela `escalas`             | count(*)                                       |
+| Tabela `configuracoes`       | count(*) — nova tabela                         |
+| Tabela `perfil_coordenador`  | count(*) — nova tabela                         |
+| `VITE_SUPABASE_URL`          | `import.meta.env.VITE_SUPABASE_URL` definida  |
+| `VITE_SUPABASE_ANON_KEY`     | `import.meta.env.VITE_SUPABASE_ANON_KEY`      |
+
+---
+
+## 📋 Tabelas BD Novas (migração 20260322)
+
+```sql
+-- Configurações globais
+CREATE TABLE configuracoes (
+  chave text PRIMARY KEY,   -- 'empresa' | 'horarios'
+  valor jsonb NOT NULL DEFAULT '{}',
+  updated_at timestamptz DEFAULT now()
+);
+
+-- Perfil do coordenador
+CREATE TABLE perfil_coordenador (
+  id uuid PRIMARY KEY,
+  user_id uuid REFERENCES auth.users(id),
+  nome text,
+  telemovel text,
+  numero_mecanografico text,
+  foto text,   -- base64
+  updated_at timestamptz,
+  UNIQUE(user_id)
+);
+```
 
 ---
 
 ## 🔗 Ver Também
 
-- [[21 - Configurações LocalStorage]] — Detalhes completos de cfg_empresa e cfg_horarios
-- [[17 - Sistema de Alertas]] — Como cfg_horarios afecta os alertas
-- [[16 - Algoritmo de Geração]] — Como cfg_horarios afecta a geração
+- [[21 - Configurações LocalStorage]] — documentação obsoleta (localStorage já não usado)
+- [[17 - Sistema de Alertas]] — como `horarios` afecta os alertas
+- [[16 - Algoritmo de Geração]] — como `horarios` afecta a geração
