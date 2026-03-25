@@ -15,6 +15,9 @@ import { useConfig } from "@/contexts/ConfigContext"
 import type { Auxiliar, Turno } from "@/types"
 import { Button } from "@/components/ui/button"
 import { AuxDrawer } from "@/components/AuxDrawer"
+import AlertPanel from "@/components/alerts/AlertPanel"
+import { classificarCobertura, TURNO_FULL, URG_POSTOS, NON_URG_POSTOS } from "@/components/alerts/alertTypes"
+import type { AlertaUnificado, CellRef } from "@/components/alerts/alertTypes"
 
 interface EscalaRow {
   id: string; data: string; auxiliar_id: string | null
@@ -178,17 +181,15 @@ export default function EscalaMensal() {
   const [selCodigo, setSelCodigo]     = useState<string | null>(null)
   const [search, setSearch]           = useState("")
   const [drawerAux, setDrawerAux]     = useState<Auxiliar | null>(null)
-  const [openSec, setOpenSec] = useState({ ausencia:true, cobertura:true, descanso:true, excesso:true })
-  const [resolvidoBanner, setResolvidoBanner] = useState(0)  // nº de alertas resolvidos recentemente
   const [substitutoModalOpen, setSubstitutoModalOpen] = useState(false)
   const [substitutoAuxId, setSubstitutoAuxId] = useState<string | null>(null)
   const [substitutoData, setSubstitutoData] = useState<string | null>(null)
   const [alertasModalOpen, setAlertasModalOpen] = useState(false)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
-  const [alertaFiltro, setAlertaFiltro] = useState<"todos"|"erro"|"aviso"|"info">("todos")
+  const [blinkCell, setBlinkCell] = useState<CellRef | null>(null)
+  const [blinkIsUrg, setBlinkIsUrg] = useState(true)
   const searchRef    = useRef<HTMLInputElement>(null)
   const tableRef     = useRef<HTMLTableElement>(null)
-  const prevAlertIds = useRef(new Set<string>())
   const exportMenuRef = useRef<HTMLDivElement>(null)
 
   // ── Swap Mensal state ──────────────────────────────────────────────────────
@@ -231,18 +232,11 @@ export default function EscalaMensal() {
   // Alertas reactivos — recalcula sempre que escalas/auxiliares/turnos/semanais mudam
   const alertas = useMemo(() => loading ? [] : calcularAlertas(), [escalas, escalasSemanais, auxiliares, turnos, year, month, loading])
 
-  // Detecta alertas resolvidos → mostra banner "✅ N resolvido(s)"
-  useEffect(() => {
-    if (loading) return
-    const currentIds = new Set(alertas.map(a => a.id))
-    const resolved   = [...prevAlertIds.current].filter(id => !currentIds.has(id))
-    if (resolved.length > 0 && prevAlertIds.current.size > 0) {
-      setResolvidoBanner(resolved.length)
-      const t = setTimeout(() => setResolvidoBanner(0), 3500)
-      return () => clearTimeout(t)
-    }
-    prevAlertIds.current = currentIds
-  }, [alertas, loading])
+  function handleEyeClick(cellRef: CellRef, isUrg: boolean) {
+    setBlinkCell(cellRef)
+    setBlinkIsUrg(isUrg)
+    setTimeout(() => setBlinkCell(null), 3000)
+  }
 
   // Click-outside para fechar export menu
   useEffect(() => {
@@ -593,17 +587,8 @@ export default function EscalaMensal() {
     return null
   }
 
-  interface AlertaMensal {
-    id: string
-    tipo: "erro" | "aviso" | "info"
-    categoria: "ausencia" | "cobertura" | "descanso" | "excesso"
-    mensagem: string
-    detalhe?: string
-    acao?: { label: string; auxId: string; dia: number }
-  }
-
-  function calcularAlertas(): AlertaMensal[] {
-    const alertas: AlertaMensal[] = []
+  function calcularAlertas(): AlertaUnificado[] {
+    const alertas: AlertaUnificado[] = []
     const cfg = horarios
     const auxMap = new Map(auxiliares.map(a => [a.id, a]))
 
@@ -611,7 +596,6 @@ export default function EscalaMensal() {
       L:"licença / baixa médica", Aci:"acidente de trabalho",
       FAA:"férias (ano anterior)", Fe:"folga por feriado", F:"folga", D:"descanso",
     }
-    // Códigos que indicam ausência real (não apenas descanso planeado)
     const ABSENCE_TIPOS = ["L","Aci","FAA","Fe"]
 
     for (let d = 1; d <= daysInMonth; d++) {
@@ -621,7 +605,6 @@ export default function EscalaMensal() {
       const label = `${d}/${month+1} (${DIAS_PT[dow]})`
       const dayAll      = escalas.filter(e => e.data === ds)
       const dayWithTurno = dayAll.filter(e => e.turno_id)
-      // Registos semanal deste dia (para complementar verificações)
       const daySemanal   = escalasSemanais.filter(s => s.data === ds)
 
       // ── A) Ausências por código especial ─────────────────────────────────
@@ -631,10 +614,13 @@ export default function EscalaMensal() {
         const motivo = ABSENCE_LABEL[e.codigo_especial] ?? e.codigo_especial
         const isBaixa = e.codigo_especial === "L" || e.codigo_especial === "Aci"
         alertas.push({
-          id: `info_ausencia_${d}_${e.auxiliar_id}_${e.codigo_especial}`,
-          tipo: isBaixa ? "aviso" : "info", categoria:"ausencia",
+          id: `ausencia_${d}_${e.auxiliar_id}_${e.codigo_especial}`,
+          severidade: isBaixa ? "amarelo" : "info",
+          categoria: "ausencia",
+          isUrg: false,
           mensagem:`${aux?.nome ?? "Auxiliar"} — ${motivo} no dia ${label}`,
           detalhe: isBaixa ? "É necessário garantir cobertura para este posto" : undefined,
+          cellRef: { data: ds, turnoLetra: "M", auxiliarId: e.auxiliar_id ?? undefined },
           acao: isBaixa && aux ? { label: "Alocar substituto", auxId: aux.id, dia: d } : undefined,
         })
       }
@@ -657,27 +643,30 @@ export default function EscalaMensal() {
         const nWorkersUniq = nWorkers.filter((w,i) => nWorkers.findIndex(x=>x.auxId===w.auxId)===i)
         if (nWorkersUniq.length === 0) {
           alertas.push({
-            id:`erro_cobertura_N0_${d}`, tipo:"erro", categoria:"cobertura",
-            mensagem:`${label} — RX URG + TAC 2 — Turno N sem auxiliar atribuído`,
-            detalhe:"Necessário mínimo 2 auxiliares no Turno N",
+            id:`cobertura_N0_${d}`, severidade:"vermelho", categoria:"cobertura_urg", isUrg:true,
+            mensagem:`${label} — RX URG + TAC 2 — Turno Noite sem auxiliar atribuído`,
+            detalhe:"Necessário mínimo 2 auxiliares no Turno Noite",
+            cellRef: { data: ds, turnoLetra: "N", posto: "RX_URG" },
           })
         } else if (nWorkersUniq.length === 1) {
           const auxName = auxMap.get(nWorkersUniq[0].auxId)?.nome ?? "?"
           alertas.push({
-            id:`erro_cobertura_N1_${d}`, tipo:"erro", categoria:"cobertura",
-            mensagem:`${label} — RX URG + TAC 2 — Turno N: apenas ${auxName}`,
+            id:`cobertura_N1_${d}`, severidade:"vermelho", categoria:"cobertura_urg", isUrg:true,
+            mensagem:`${label} — RX URG + TAC 2 — Turno Noite: apenas ${auxName}`,
             detalhe:"Falta 1 auxiliar para cobertura completa (necessário 2)",
+            cellRef: { data: ds, turnoLetra: "N", posto: "TAC2" },
           })
         } else if (nWorkersUniq.length > 2) {
           const nNames = nWorkersUniq.map(w => auxMap.get(w.auxId)?.nome ?? "?").join(", ")
           alertas.push({
-            id:`aviso_cobertura_Nexcess_${d}`, tipo:"aviso", categoria:"cobertura",
-            mensagem:`${label} — Turno N com ${nWorkersUniq.length} auxiliares: ${nNames}`,
+            id:`cobertura_Nexcess_${d}`, severidade:"amarelo", categoria:"cobertura_geral", isUrg:false,
+            mensagem:`${label} — Turno Noite com ${nWorkersUniq.length} auxiliares: ${nNames}`,
             detalhe:"Esperado máximo 2 auxiliares (RX URG + TAC 2)",
+            cellRef: { data: ds, turnoLetra: "N" },
           })
         }
 
-        // Verificar cobertura RX_URG e TAC2 para Turno M e T
+        // Verificar cobertura RX_URG, TAC2, TAC1 para Turno M e T
         const POSTOS_M_T = ["RX_URG", "TAC2", "TAC1"]
         for (const posto of POSTOS_M_T) {
           for (const turnoLetra of ["M", "T"] as const) {
@@ -687,18 +676,22 @@ export default function EscalaMensal() {
             }) || daySemanal.some(s => s.turno_letra === turnoLetra && s.posto === posto)
 
             if (!hasCoverage) {
-              const tipoAlerta = (posto === "TAC1" && turnoLetra === "T") ? "aviso" : "erro"
+              const cls = classificarCobertura(posto, turnoLetra)
               const nomePostoUI = posto === "RX_URG" ? "RX URG" : posto === "TAC1" ? "TAC 1" : "TAC 2"
               alertas.push({
-                id:`erro_cobertura_${posto}_${turnoLetra}_${d}`, tipo:tipoAlerta, categoria:"cobertura",
-                mensagem:`${label} — ${nomePostoUI} sem auxiliar no Turno ${turnoLetra}`,
-                detalhe:`Posto ${nomePostoUI} precisa de cobertura no Turno ${turnoLetra}`,
+                id:`cobertura_${posto}_${turnoLetra}_${d}`,
+                severidade: cls.severidade,
+                categoria: cls.categoria,
+                isUrg: cls.isUrg,
+                mensagem:`${label} — ${nomePostoUI} — Precisa de Auxiliar no Turno ${TURNO_FULL[turnoLetra]}`,
+                detalhe:`Posto ${nomePostoUI} sem cobertura no Turno ${TURNO_FULL[turnoLetra]}`,
+                cellRef: { data: ds, turnoLetra, posto },
               })
             }
           }
         }
 
-        // Verificar cobertura Eco URG (EXAM1/EXAM2) para Turno M e T (seg–sáb)
+        // Verificar cobertura Eco URG (EXAM1) para Turno M e T (seg–sáb)
         if (!isSun) {
           for (const turnoLetra of ["M", "T"] as const) {
             const hasExamCoverage = dayWithTurno.some(e => {
@@ -707,12 +700,15 @@ export default function EscalaMensal() {
             }) || daySemanal.some(s => s.turno_letra === turnoLetra && (s.posto === "EXAM1" || s.posto === "EXAM2"))
 
             if (!hasExamCoverage) {
-              const tipoAlerta = turnoLetra === "M" ? "erro" : "aviso"
-              const detalheMsg = turnoLetra === "M" ? "na manhã" : "na tarde"
+              const cls = classificarCobertura("EXAM1", turnoLetra)
               alertas.push({
-                id:`erro_cobertura_exam1${turnoLetra}_${d}`, tipo:tipoAlerta, categoria:"cobertura",
-                mensagem:`${label} — Eco URG sem auxiliar no Turno ${turnoLetra}`,
-                detalhe:`Posto EXAM1 precisa de cobertura ${detalheMsg}`,
+                id:`cobertura_exam1_${turnoLetra}_${d}`,
+                severidade: cls.severidade,
+                categoria: cls.categoria,
+                isUrg: cls.isUrg,
+                mensagem:`${label} — Eco URG — Precisa de Auxiliar no Turno ${TURNO_FULL[turnoLetra]}`,
+                detalhe:`Posto EXAM1 sem cobertura no Turno ${TURNO_FULL[turnoLetra]}`,
+                cellRef: { data: ds, turnoLetra, posto: "EXAM1" },
               })
             }
           }
@@ -725,9 +721,10 @@ export default function EscalaMensal() {
           const aux = auxMap.get(e.auxiliar_id ?? "") as (Auxiliar & { trabalha_fds?: boolean }) | undefined
           if (aux && aux.trabalha_fds === false)
             alertas.push({
-              id:`erro_cobertura_fds_${d}_${e.auxiliar_id}`, tipo:"erro", categoria:"cobertura",
+              id:`cobertura_fds_${d}_${e.auxiliar_id}`, severidade:"vermelho", categoria:"cobertura_urg", isUrg:true,
               mensagem:`${aux.nome} escalado/a ao ${dow===0?"Domingo":"Sábado"} ${label}`,
               detalhe:"Este/a auxiliar não está configurado/a para trabalhar ao fim de semana",
+              cellRef: { data: ds, turnoLetra: "M", auxiliarId: e.auxiliar_id ?? undefined },
             })
         }
       }
@@ -746,9 +743,10 @@ export default function EscalaMensal() {
       if (nl === "M" || nl === "T") {
         const aux = auxMap.get(e.auxiliar_id ?? "")
         alertas.push({
-          id:`erro_descanso_${e.auxiliar_id}_${e.data}`, tipo:"erro", categoria:"descanso",
-          mensagem:`${aux?.nome ?? "?"} — Turno N em ${format(parseISO(e.data),"d/M")} seguido de Turno ${nl} em ${format(parseISO(nextDs),"d/M")}`,
+          id:`descanso_${e.auxiliar_id}_${e.data}`, severidade:"vermelho", categoria:"descanso", isUrg:true,
+          mensagem:`${aux?.nome ?? "?"} — Turno Noite em ${format(parseISO(e.data),"d/M")} seguido de Turno ${TURNO_FULL[nl]} em ${format(parseISO(nextDs),"d/M")}`,
           detalhe:"Descanso mínimo de 11h violado entre turnos consecutivos",
+          cellRef: { data: nextDs, turnoLetra: nl, auxiliarId: e.auxiliar_id ?? undefined },
         })
       }
     }
@@ -762,14 +760,14 @@ export default function EscalaMensal() {
       }).length
       if (nCount > cfg.maxTurnosNoturnosMes)
         alertas.push({
-          id:`aviso_excesso_N_${aux.id}`, tipo:"aviso", categoria:"excesso",
-          mensagem:`${aux.nome} — ${nCount} turnos N este mês (limite: ${cfg.maxTurnosNoturnosMes})`,
+          id:`excesso_N_${aux.id}`, severidade:"amarelo", categoria:"excesso_mais", isUrg:false,
+          mensagem:`${aux.nome} — ${nCount} turnos Noite este mês (limite: ${cfg.maxTurnosNoturnosMes})`,
         })
 
       const total = escalas.filter(e => e.auxiliar_id === aux.id && e.turno_id).length
       if (total > cfg.maxTurnosMes)
         alertas.push({
-          id:`aviso_excesso_total_${aux.id}`, tipo:"aviso", categoria:"excesso",
+          id:`excesso_total_${aux.id}`, severidade:"amarelo", categoria:"excesso_mais", isUrg:false,
           mensagem:`${aux.nome} — ${total} turnos este mês (limite: ${cfg.maxTurnosMes})`,
         })
 
@@ -780,16 +778,16 @@ export default function EscalaMensal() {
         const t = turnos.find(t => t.id === e.turno_id)
         if (t) totalHoras += calcShiftHours(t)
       }
-      totalHoras = Math.round(totalHoras * 10) / 10 // arredondar a 1 casa decimal
+      totalHoras = Math.round(totalHoras * 10) / 10
       if (totalHoras > 160)
         alertas.push({
-          id:`aviso_horas_excesso_${aux.id}`, tipo:"aviso", categoria:"excesso",
+          id:`excesso_horas_${aux.id}`, severidade:"amarelo", categoria:"excesso_mais", isUrg:false,
           mensagem:`${aux.nome} — ${totalHoras}h atribuídas este mês (máximo recomendado: 160h)`,
           detalhe:`${auxEscalas.length} turnos totalizando ${totalHoras} horas`,
         })
       if (auxEscalas.length > 0 && totalHoras < 80)
         alertas.push({
-          id:`info_horas_deficit_${aux.id}`, tipo:"info", categoria:"excesso",
+          id:`deficit_horas_${aux.id}`, severidade:"info", categoria:"excesso_menos", isUrg:false,
           mensagem:`${aux.nome} — apenas ${totalHoras}h atribuídas este mês (mínimo esperado: 80h)`,
         })
     }
@@ -801,7 +799,7 @@ export default function EscalaMensal() {
         || escalasSemanais.some(s => s.auxiliar_id === aux.id)
       if (!temTurno)
         alertas.push({
-          id:`info_sem_turnos_${aux.id}`, tipo:"info", categoria:"ausencia",
+          id:`sem_turnos_${aux.id}`, severidade:"info", categoria:"ausencia", isUrg:false,
           mensagem:`${aux.nome} não tem turnos atribuídos este mês`,
           detalhe:"Verifique se este/a auxiliar deve ser escalado/a",
         })
@@ -1394,27 +1392,44 @@ export default function EscalaMensal() {
           <div className="w-px h-6 bg-gray-200 mx-1"/>
 
           {/* Alertas */}
-          <Button
-            onClick={() => { setAlertasModalOpen(true); setAlertaFiltro("todos") }}
-            disabled={loading}
-            variant="outline"
-            size="sm"
-            className="gap-2 relative border-amber-300 text-amber-700 hover:bg-amber-50"
-          >
-            <AlertCircle className="h-4 w-4"/>
-            Alertas
-            {alertas.filter(a => a.tipo === "erro").length > 0 && (
-              <span style={{
-                position:"absolute", top:-6, right:-6,
-                background:"#EF4444", color:"#fff", fontSize:10, fontWeight:800,
-                borderRadius:99, minWidth:16, height:16,
-                display:"flex", alignItems:"center", justifyContent:"center",
-                padding:"0 4px", boxShadow:"0 1px 4px rgba(239,68,68,0.5)",
-              }}>
-                {alertas.filter(a => a.tipo === "erro").length}
-              </span>
-            )}
-          </Button>
+          {(() => {
+            const urgCount = alertas.filter(a => a.severidade === "vermelho").length
+            const avisoCount = alertas.filter(a => a.severidade === "amarelo").length
+            return (
+              <Button
+                onClick={() => setAlertasModalOpen(true)}
+                disabled={loading}
+                variant="outline"
+                size="sm"
+                className="gap-2 relative border-amber-300 text-amber-700 hover:bg-amber-50"
+              >
+                <AlertCircle className="h-4 w-4"/>
+                Alertas
+                {urgCount > 0 && (
+                  <span style={{
+                    position:"absolute", top:-6, right: avisoCount > 0 ? 12 : -6,
+                    background:"#EF4444", color:"#fff", fontSize:10, fontWeight:800,
+                    borderRadius:99, minWidth:16, height:16,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    padding:"0 4px", boxShadow:"0 1px 4px rgba(239,68,68,0.5)",
+                  }}>
+                    {urgCount}
+                  </span>
+                )}
+                {avisoCount > 0 && (
+                  <span style={{
+                    position:"absolute", top:-6, right:-6,
+                    background:"#F59E0B", color:"#fff", fontSize:10, fontWeight:800,
+                    borderRadius:99, minWidth:16, height:16,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    padding:"0 4px", boxShadow:"0 1px 4px rgba(245,158,11,0.5)",
+                  }}>
+                    {avisoCount}
+                  </span>
+                )}
+              </Button>
+            )
+          })()}
 
           {/* Dropdown Export */}
           <div className="relative" ref={exportMenuRef}>
@@ -1518,6 +1533,7 @@ export default function EscalaMensal() {
                           const isCtrlSel = ctrlSelMensal && ctrlSelMensal.auxId===aux.id && ctrlSelMensal.data===dateStr
                           const isSwappedM = swappedCellsMensal.has(`${aux.id}_${dateStr}`)
                           const hasTurno = !!e?.turno_id
+                          const isBlink = blinkCell && blinkCell.data === dateStr && (blinkCell.auxiliarId === aux.id || !blinkCell.auxiliarId)
                           return(
                             <td key={d}
                               onClick={()=>{
@@ -1525,7 +1541,7 @@ export default function EscalaMensal() {
                                 else { openCell(aux.id,d) }
                               }}
                               title={di?.code??(di?.isSemanal?"(da escala semanal)":"")}
-                              style={{ border:`2px solid ${isCtrlSel?"#2563EB":isSwappedM?"#2563EB":di?.isSemanal?"#6366F1":"#CCC"}`,padding:"2px 0",textAlign:"center",cursor:ctrlHeldMensal&&hasTurno?"crosshair":"pointer",background:isCtrlSel?"#DBEAFE":bg,color:di?di.text:"#374151",fontWeight:di?700:400,fontSize:10,minWidth:30,userSelect:"none",transition:"filter 0.1s",animation:fl?"cellFlash 0.8s ease":isSwappedM?"swapFlash 1.2s ease 2":"none",fontStyle:di?.isSemanal?"italic":"normal",opacity:di?.isSemanal?0.8:1 }}
+                              style={{ border:`2px solid ${isCtrlSel?"#2563EB":isSwappedM?"#2563EB":isBlink?(blinkIsUrg?"#EF4444":"#F59E0B"):di?.isSemanal?"#6366F1":"#CCC"}`,padding:"2px 0",textAlign:"center",cursor:ctrlHeldMensal&&hasTurno?"crosshair":"pointer",background:isCtrlSel?"#DBEAFE":bg,color:di?di.text:"#374151",fontWeight:di?700:400,fontSize:10,minWidth:30,userSelect:"none",transition:"filter 0.1s",animation:fl?"cellFlash 0.8s ease":isSwappedM?"swapFlash 1.2s ease 2":isBlink?(blinkIsUrg?"blinkRed 1s ease 3":"blinkYellow 1s ease 3"):"none",fontStyle:di?.isSemanal?"italic":"normal",opacity:di?.isSemanal?0.8:1 }}
                               onMouseEnter={ev=>(ev.currentTarget.style.filter="brightness(0.88)")}
                               onMouseLeave={ev=>(ev.currentTarget.style.filter="brightness(1)")}>
                               {di?.code??""}
@@ -1547,187 +1563,16 @@ export default function EscalaMensal() {
         {SPECIAL.map(s=><span key={s.code} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded border" style={{background:s.bg,color:s.text,borderColor:s.bg}}><strong>{s.code}</strong> — {s.label}</span>)}
       </div>}
 
-      {/* Modal de Alertas Mensais — desliza da direita */}
-      {alertasModalOpen && (() => {
-        const SEC_CFG = [
-          { key:"cobertura" as const, label:"Falta de Cobertura",   icon:"🚨", color:"#991B1B", bg:"#FEF2F2", border:"#FECACA",  tipo:"erro"  as const },
-          { key:"descanso"  as const, label:"Violações de Descanso", icon:"😴", color:"#92400E", bg:"#FFFBEB", border:"#FDE68A",  tipo:"aviso" as const },
-          { key:"excesso"   as const, label:"Excessos de Turnos",    icon:"⚠️", color:"#92400E", bg:"#FFFBEB", border:"#FDE68A",  tipo:"aviso" as const },
-          { key:"ausencia"  as const, label:"Ausências Registadas",  icon:"📋", color:"#1E40AF", bg:"#EFF6FF", border:"#BFDBFE",  tipo:"info"  as const },
-        ] as const
-
-        const erros  = alertas.filter(a => a.tipo === "erro")
-        const avisos = alertas.filter(a => a.tipo === "aviso")
-        const infos  = alertas.filter(a => a.tipo === "info")
-
-        const filtrados = alertaFiltro === "todos" ? alertas
-          : alertas.filter(a => a.tipo === alertaFiltro)
-
-        const byCategFiltered = (cat: typeof SEC_CFG[number]["key"]) =>
-          filtrados.filter(a => a.categoria === cat)
-
-        const FILTROS = [
-          { id:"todos"  as const, label:"Todos",    count: alertas.length, bg:"#F3F4F6", active:"#111827", border:"#D1D5DB"  },
-          { id:"erro"   as const, label:"Erros",    count: erros.length,   bg:"#FEF2F2", active:"#991B1B", border:"#FECACA"  },
-          { id:"aviso"  as const, label:"Avisos",   count: avisos.length,  bg:"#FFFBEB", active:"#92400E", border:"#FDE68A"  },
-          { id:"info"   as const, label:"Ausências",count: infos.length,   bg:"#EFF6FF", active:"#1E40AF", border:"#BFDBFE"  },
-        ]
-
-        return (
-          <>
-            <div
-              style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:59,animation:"mFadeIn 0.2s ease"}}
-              onClick={() => setAlertasModalOpen(false)}
-            />
-            <div style={{
-              position:"fixed", top:0, right:0, bottom:0, width:400, maxWidth:"100%",
-              background:"#fff", boxShadow:"-4px 0 32px rgba(0,0,0,0.15)", zIndex:60,
-              display:"flex", flexDirection:"column", animation:"slideLeftIn 0.3s cubic-bezier(0.34,1.56,0.64,1)",
-            }}>
-              {/* Header */}
-              <div style={{padding:"18px 20px 0",flex:"0 0 auto"}}>
-                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:14}}>
-                  <div>
-                    <h3 style={{fontWeight:800,fontSize:16,color:"#111",margin:0}}>Alertas do Mês</h3>
-                    <p style={{fontSize:12,color:"#9CA3AF",marginTop:3,margin:"3px 0 0",textTransform:"capitalize"}}>
-                      {format(currentDate,"MMMM yyyy",{locale:ptBR})}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setAlertasModalOpen(false)}
-                    style={{background:"#F4F4F5",border:"none",cursor:"pointer",padding:6,borderRadius:8,color:"#71717A",lineHeight:0}}
-                  >
-                    <X size={16}/>
-                  </button>
-                </div>
-
-                {/* Banner resolvido */}
-                {resolvidoBanner > 0 && (
-                  <div style={{padding:"8px 12px",background:"#F0FDF4",border:"1px solid #86EFAC",borderRadius:8,color:"#166534",fontWeight:700,fontSize:12,display:"flex",gap:6,alignItems:"center",marginBottom:12,animation:"mFadeIn 0.3s ease"}}>
-                    ✅ {resolvidoBanner} alerta{resolvidoBanner!==1?"s":""} resolvido{resolvidoBanner!==1?"s":""}!
-                  </div>
-                )}
-
-                {/* Filtros */}
-                <div style={{display:"flex",gap:6,flexWrap:"wrap",paddingBottom:14,borderBottom:"1px solid #F0F0F0"}}>
-                  {FILTROS.map(f => {
-                    const isActive = alertaFiltro === f.id
-                    return (
-                      <button
-                        key={f.id}
-                        onClick={() => setAlertaFiltro(f.id)}
-                        style={{
-                          padding:"4px 10px", borderRadius:99, fontSize:12, fontWeight:700,
-                          border:`1px solid ${isActive ? f.border : "#E5E7EB"}`,
-                          background: isActive ? f.bg : "#fff",
-                          color: isActive ? f.active : "#6B7280",
-                          cursor:"pointer", transition:"all 0.15s",
-                          display:"flex", alignItems:"center", gap:5,
-                        }}
-                      >
-                        {f.label}
-                        <span style={{
-                          background: isActive ? f.border : "#F3F4F6",
-                          color: isActive ? f.active : "#9CA3AF",
-                          borderRadius:99, padding:"0 6px", fontSize:10, fontWeight:800,
-                        }}>{f.count}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Body */}
-              <div style={{overflowY:"auto",flex:1,padding:"14px 20px"}}>
-                {filtrados.length === 0 ? (
-                  <div style={{textAlign:"center",color:"#9CA3AF",fontSize:13,padding:"48px 16px"}}>
-                    <div style={{fontSize:36,marginBottom:10}}>✅</div>
-                    <div style={{fontWeight:700,color:"#374151"}}>Sem alertas!</div>
-                    <div style={{fontSize:12,marginTop:4,opacity:0.7}}>A escala está bem coberta.</div>
-                  </div>
-                ) : (
-                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                    {SEC_CFG.map(sec => {
-                      const items = byCategFiltered(sec.key)
-                      if (items.length === 0) return null
-                      const isOpen = openSec[sec.key]
-                      return (
-                        <div key={sec.key} style={{borderRadius:10,overflow:"hidden",border:`1px solid ${sec.border}`,marginBottom:8}}>
-                          <button
-                            onClick={() => setOpenSec(p => ({...p, [sec.key]: !p[sec.key]}))}
-                            style={{
-                              width:"100%", display:"flex", gap:8, alignItems:"center",
-                              padding:"10px 14px", background:isOpen ? sec.bg : "#FAFAFA",
-                              border:"none", cursor:"pointer", textAlign:"left",
-                              borderBottom: isOpen ? `1px solid ${sec.border}` : "none",
-                              transition:"background 0.15s",
-                            }}
-                          >
-                            <span style={{fontSize:15}}>{sec.icon}</span>
-                            <span style={{fontWeight:700,color:sec.color,flex:1,fontSize:12}}>{sec.label}</span>
-                            <span style={{background:sec.border,color:sec.color,fontWeight:800,borderRadius:99,padding:"2px 8px",fontSize:11}}>{items.length}</span>
-                            <span style={{color:"#9CA3AF",fontSize:10,marginLeft:4}}>{isOpen?"▲":"▼"}</span>
-                          </button>
-                          {isOpen && (
-                            <div style={{padding:"8px",background:"#fff"}}>
-                              {items.map(a => (
-                                <div key={a.id} style={{
-                                  display:"flex", alignItems:"center", justifyContent:"space-between",
-                                  gap:8, padding:"8px 10px", borderRadius:8, marginBottom:4,
-                                  background: a.tipo==="erro"?"#FEF2F2": a.tipo==="aviso"?"#FFFBEB":"#EFF6FF",
-                                  borderLeft:`3px solid ${a.tipo==="erro"?"#EF4444":a.tipo==="aviso"?"#F59E0B":"#3B82F6"}`,
-                                  border:`1px solid ${a.tipo==="erro"?"#FECACA":a.tipo==="aviso"?"#FDE68A":"#BFDBFE"}`,
-                                }}>
-                                  <div style={{flex:1,minWidth:0}}>
-                                    <div style={{fontWeight:600,fontSize:12,color:a.tipo==="erro"?"#991B1B":a.tipo==="aviso"?"#92400E":"#1E40AF"}}>
-                                      {a.mensagem}
-                                    </div>
-                                    {a.detalhe && (
-                                      <div style={{fontSize:11,color:"#9CA3AF",marginTop:2}}>↳ {a.detalhe}</div>
-                                    )}
-                                  </div>
-                                  {a.acao && (
-                                    <button
-                                      onClick={() => { handleAlertAction(a.acao!.auxId, a.acao!.dia); setAlertasModalOpen(false) }}
-                                      style={{
-                                        background:"#4F46E5", color:"#fff", border:"none", borderRadius:7,
-                                        padding:"5px 11px", fontSize:11, fontWeight:700, cursor:"pointer",
-                                        whiteSpace:"nowrap", flexShrink:0,
-                                        boxShadow:"0 1px 4px rgba(79,70,229,0.3)",
-                                        transition:"background 0.15s",
-                                      }}
-                                      onMouseEnter={e => (e.currentTarget.style.background="#4338CA")}
-                                      onMouseLeave={e => (e.currentTarget.style.background="#4F46E5")}
-                                    >
-                                      {a.acao.label}
-                                    </button>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Footer */}
-              <div style={{padding:"14px 20px",borderTop:"1px solid #F0F0F0",background:"#F9FAFB",flex:"0 0 auto"}}>
-                <button
-                  onClick={() => setAlertasModalOpen(false)}
-                  style={{width:"100%",background:"#4F46E5",color:"#fff",border:"none",borderRadius:9,padding:"10px 16px",cursor:"pointer",fontSize:13,fontWeight:700,transition:"background 0.2s"}}
-                  onMouseEnter={e => (e.currentTarget.style.background="#4338CA")}
-                  onMouseLeave={e => (e.currentTarget.style.background="#4F46E5")}
-                >
-                  Fechar
-                </button>
-              </div>
-            </div>
-          </>
-        )
-      })()}
+      {/* Painel de Alertas Mensais */}
+      <AlertPanel
+        open={alertasModalOpen}
+        onClose={() => setAlertasModalOpen(false)}
+        alertas={alertas}
+        titulo="Alertas do Mês"
+        subtitulo={format(currentDate, "MMMM yyyy", { locale: ptBR })}
+        onEyeClick={handleEyeClick}
+        onActionClick={(acao) => { handleAlertAction(acao.auxId, acao.dia); setAlertasModalOpen(false) }}
+      />
 
       {/* Modals */}
       {generating && <GenModal total={genProgress.total} current={genProgress.current} log={genLog}/>}
@@ -2051,6 +1896,9 @@ export default function EscalaMensal() {
         @keyframes slideLeftIn{from{opacity:0;transform:translateX(100%)}to{opacity:1;transform:translateX(0)}}
         @keyframes cellFlash{0%{filter:brightness(1.9) saturate(1.5)}50%{filter:brightness(1.3) saturate(1.2)}100%{filter:brightness(1) saturate(1)}}
         @keyframes swapFlash{0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,0)}25%,75%{box-shadow:0 0 0 4px rgba(37,99,235,0.55)}50%{box-shadow:0 0 0 6px rgba(37,99,235,0.85)}}
+        @keyframes blinkRed{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}25%,75%{box-shadow:0 0 0 4px rgba(239,68,68,0.6)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0.9);background:#FEE2E2}}
+        @keyframes blinkYellow{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,0)}25%,75%{box-shadow:0 0 0 4px rgba(245,158,11,0.5)}50%{box-shadow:0 0 0 6px rgba(245,158,11,0.8);background:#FEF3C7}}
+        @keyframes fadeIn{from{opacity:0}to{opacity:1}}
         @keyframes spin{to{transform:rotate(360deg)}}
         
         /* Toast notification */

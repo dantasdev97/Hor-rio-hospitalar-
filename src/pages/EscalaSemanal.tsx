@@ -2,13 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { format, startOfWeek, addDays, getDay, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { ChevronLeft, ChevronRight, Search, X, Check, FileDown, MessageCircle, Loader2, Trash2, RotateCcw, Printer, Loader, Info, AlertCircle, MoreVertical, ArrowLeftRight, ChevronDown } from "lucide-react"
+import { ChevronLeft, ChevronRight, Search, X, Check, FileDown, MessageCircle, Loader2, Trash2, RotateCcw, Printer, Loader, Info, AlertCircle, MoreVertical, ArrowLeftRight, ChevronDown, Eye } from "lucide-react"
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 import html2canvas from "html2canvas"
 import { supabase } from "@/lib/supabaseClient"
 import { useConfig } from "@/contexts/ConfigContext"
 import { Button } from "@/components/ui/button"
+import AlertPanel from "@/components/alerts/AlertPanel"
+import { classificarCobertura, TURNO_FULL, URG_POSTOS, NON_URG_POSTOS } from "@/components/alerts/alertTypes"
+import type { AlertaUnificado, CellRef } from "@/components/alerts/alertTypes"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DIAS_PT = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"]
@@ -144,8 +147,9 @@ export default function EscalaSemanal() {
   const [undoing,    setUndoing]    = useState(false)
   const [showClear,  setShowClear]  = useState(false)
   const [alertasModalOpen, setAlertasModalOpen] = useState(false)
-  const [alertasTipo, setAlertasTipo] = useState<"all" | "erro" | "aviso" | "info">("all")
-  const [alertasDia, setAlertasDia] = useState<string | null>(null)
+  // Blink cell — feedback visual ao clicar no ícone Eye
+  const [blinkCell, setBlinkCell] = useState<CellRef | null>(null)
+  const [blinkIsUrg, setBlinkIsUrg] = useState(true)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
 
@@ -524,23 +528,13 @@ export default function EscalaSemanal() {
     return getCellName(esc)
   }
 
-  // ── Calcular Alertas Semanal ──────────────────────────────────────────
-  interface AlertaSemanal {
-    id: string
-    tipo: "erro" | "aviso" | "info"
-    categoria: "cobertura" | "conflito" | "outro"
-    mensagem: string
-    detalhe?: string
-  }
-
-  function calcularAlertasSemanal(): AlertaSemanal[] {
-    const alertas: AlertaSemanal[] = []
-    const cfg = horarios
+  // ── Calcular Alertas Semanal (Unificado) ────────────────────────────────
+  function calcularAlertasSemanal(): AlertaUnificado[] {
+    const alertas: AlertaUnificado[] = []
 
     for (const data of weekDays.map(d => format(d, "yyyy-MM-dd"))) {
       const dayName = format(parseISO(data), "EEEE, d MMMM", { locale: ptBR })
 
-      // Verificar cobertura por Posto + Turno
       for (const posto of POSTOS) {
         for (const turnoLetra of ["M", "T", "N"] as const) {
           if (!postoOpera(posto.key, turnoLetra, data)) continue
@@ -553,35 +547,47 @@ export default function EscalaSemanal() {
             ? rows.map(r => r.doutor_id).filter(Boolean)
             : rows.map(r => r.auxiliar_id).filter(Boolean)
           const uniquePersons = [...new Set(personIds)]
+          const turnoNome = TURNO_FULL[turnoLetra] ?? turnoLetra
+          const cls = classificarCobertura(posto.key, turnoLetra)
+          const cellRef: CellRef = { data, turnoLetra, posto: posto.key }
 
           if (uniquePersons.length === 0) {
             alertas.push({
               id: `alerta_${data}_${posto.key}_${turnoLetra}_vazio`,
-              tipo: "erro",
-              categoria: "cobertura",
-              mensagem: `${dayName} — ${posto.label} sem cobertura no Turno ${turnoLetra}`,
-              detalhe: tipo === "doutor" ? "Precisa de um doutor" : `Precisa de ${maxPersons} ${maxPersons === 1 ? "auxiliar" : "auxiliares"}`,
+              severidade: cls.severidade,
+              categoria: cls.categoria,
+              isUrg: cls.isUrg,
+              mensagem: `${dayName} — ${posto.label} sem auxiliar no Turno ${turnoNome}`,
+              detalhe: tipo === "doutor" ? "Precisa de um doutor" : `Precisa de Auxiliar`,
+              cellRef,
             })
           } else if (!isMulti && uniquePersons.length > 1) {
             alertas.push({
               id: `alerta_${data}_${posto.key}_${turnoLetra}_multi`,
-              tipo: "aviso",
-              categoria: "conflito",
-              mensagem: `${dayName} — ${posto.label} Turno ${turnoLetra}: ${uniquePersons.length} pessoas (esperado 1)`,
+              severidade: "amarelo",
+              categoria: "outro",
+              isUrg: false,
+              mensagem: `${dayName} — ${posto.label} Turno ${turnoNome}: ${uniquePersons.length} pessoas (esperado 1)`,
+              cellRef,
             })
           } else if (isMulti && uniquePersons.length > maxPersons) {
             alertas.push({
               id: `alerta_${data}_${posto.key}_${turnoLetra}_excess`,
-              tipo: "aviso",
-              categoria: "conflito",
-              mensagem: `${dayName} — ${posto.label} Turno ${turnoLetra}: ${uniquePersons.length} pessoas (máximo ${maxPersons})`,
+              severidade: "amarelo",
+              categoria: "outro",
+              isUrg: false,
+              mensagem: `${dayName} — ${posto.label} Turno ${turnoNome}: ${uniquePersons.length} pessoas (máximo ${maxPersons})`,
+              cellRef,
             })
           } else if (isMulti && uniquePersons.length < maxPersons) {
             alertas.push({
               id: `alerta_${data}_${posto.key}_${turnoLetra}_deficit`,
-              tipo: "info",
-              categoria: "cobertura",
-              mensagem: `${dayName} — ${posto.label} Turno ${turnoLetra}: apenas ${uniquePersons.length} de ${maxPersons} posições preenchidas`,
+              severidade: "info",
+              categoria: "cobertura_geral",
+              isUrg: false,
+              mensagem: `${dayName} — ${posto.label} Turno ${turnoNome}: apenas ${uniquePersons.length} de ${maxPersons} posições preenchidas`,
+              detalhe: "Precisa de Auxiliar",
+              cellRef,
             })
           }
         }
@@ -589,6 +595,18 @@ export default function EscalaSemanal() {
     }
 
     return alertas
+  }
+
+  // Alertas memoizados
+  const alertasUnificados = useMemo(() => loading ? [] : calcularAlertasSemanal(), [escalas, mensalEntries, weekDays, loading])
+
+  // Handler para o ícone Eye — pisca a célula correspondente
+  function handleEyeClick(cellRef: CellRef, isUrg: boolean) {
+    setBlinkCell(cellRef)
+    setBlinkIsUrg(isUrg)
+    // Auto-scroll para a tabela se necessário
+    tableRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+    setTimeout(() => setBlinkCell(null), 3000)
   }
 
   // ── Dialog ────────────────────────────────────────────────────────────────
@@ -1483,20 +1501,19 @@ export default function EscalaSemanal() {
 
           {/* Alertas */}
           {(() => {
-            const alertasCount = !loading ? calcularAlertasSemanal() : []
-            const erroCount = alertasCount.filter(a => a.tipo === "erro").length
-            const avisoCount = alertasCount.filter(a => a.tipo === "aviso").length
+            const urgCount = alertasUnificados.filter(a => a.severidade === "vermelho").length
+            const avisoCount = alertasUnificados.filter(a => a.severidade === "amarelo").length
             return (
               <button
-                onClick={() => { setAlertasTipo("all"); setAlertasDia(null); setAlertasModalOpen(true) }}
+                onClick={() => setAlertasModalOpen(true)}
                 disabled={loading}
                 style={{
                   display:"flex",alignItems:"center",gap:6,
                   padding:"5px 12px",borderRadius:8,border:"1px solid",cursor:loading?"not-allowed":"pointer",
                   fontSize:13,fontWeight:600,transition:"all 0.15s",
-                  borderColor: erroCount > 0 ? "#FCA5A5" : avisoCount > 0 ? "#FCD34D" : "#D1D5DB",
-                  background: erroCount > 0 ? "#FEF2F2" : avisoCount > 0 ? "#FFFBEB" : "#F9FAFB",
-                  color: erroCount > 0 ? "#DC2626" : avisoCount > 0 ? "#92400E" : "#6B7280",
+                  borderColor: urgCount > 0 ? "#FCA5A5" : avisoCount > 0 ? "#FCD34D" : "#D1D5DB",
+                  background: urgCount > 0 ? "#FEF2F2" : avisoCount > 0 ? "#FFFBEB" : "#F9FAFB",
+                  color: urgCount > 0 ? "#DC2626" : avisoCount > 0 ? "#92400E" : "#6B7280",
                   opacity: loading ? 0.5 : 1,
                 }}
                 onMouseEnter={e => !loading && (e.currentTarget.style.filter="brightness(0.95)")}
@@ -1504,10 +1521,10 @@ export default function EscalaSemanal() {
               >
                 <AlertCircle size={15}/>
                 Alertas
-                {erroCount > 0 && (
-                  <span style={{background:"#DC2626",color:"#fff",borderRadius:10,padding:"1px 6px",fontSize:11,fontWeight:700,lineHeight:"16px"}}>{erroCount}</span>
+                {urgCount > 0 && (
+                  <span style={{background:"#DC2626",color:"#fff",borderRadius:10,padding:"1px 6px",fontSize:11,fontWeight:700,lineHeight:"16px"}}>{urgCount}</span>
                 )}
-                {erroCount === 0 && avisoCount > 0 && (
+                {urgCount === 0 && avisoCount > 0 && (
                   <span style={{background:"#F59E0B",color:"#fff",borderRadius:10,padding:"1px 6px",fontSize:11,fontWeight:700,lineHeight:"16px"}}>{avisoCount}</span>
                 )}
               </button>
@@ -1660,6 +1677,11 @@ export default function EscalaSemanal() {
                         : false
                       const isEmpty = opera && !cellName
                       const placeholder = isDocCell && isEmpty ? "Dr. ?" : ""
+                      // Alerta visual permanente para células vazias
+                      const isUrgEmpty = isEmpty && !isDocCell && URG_POSTOS[p.key]?.includes(turno)
+                      const isNonUrgEmpty = isEmpty && !isDocCell && NON_URG_POSTOS[p.key]?.includes(turno)
+                      // Blink ao clicar no Eye do painel de alertas
+                      const isBlink = blinkCell && blinkCell.data === dateStr && blinkCell.turnoLetra === turno && blinkCell.posto === p.key
                       // Highlight se este posto tem o auxiliar filtrado (single ou multi)
                       const isHighlighted = highlightAuxId && (
                         esc?.auxiliar_id === highlightAuxId ||
@@ -1686,14 +1708,14 @@ export default function EscalaSemanal() {
                               ? `${cellName}${derived?" (da escala mensal)":""}${temRestr?" ⚠️ restrição ativa":""}${ctrlHeld?" — Ctrl+Click para trocar":""}`
                               : isDocCell ? "Clique para atribuir Doutor" : "Clique para atribuir"}
                           style={{ ...cellBase,
-                            backgroundColor: isCtrlSelected ? "#DBEAFE" : isHighlighted ? "#DBEAFE" : !opera ? "#E5E7EB" : p.bg,
+                            backgroundColor: isCtrlSelected ? "#DBEAFE" : isHighlighted ? "#DBEAFE" : !opera ? "#E5E7EB" : isUrgEmpty ? "#FEE2E2" : isNonUrgEmpty ? "#FEF9C3" : p.bg,
                             opacity: !opera ? 0.5 : 1,
                             fontStyle: placeholder ? "italic" : "normal",
                             color: placeholder ? "#9CA3AF" : "inherit",
                             cursor: !opera ? "not-allowed" : ctrlHeld && cellName && !isDouble && !isDocCell ? "crosshair" : "pointer",
-                            border: isCtrlSelected ? "2px solid #2563EB" : isSwapped ? "2px solid #2563EB" : temRestr ? "2px solid #EF4444" : isHighlighted ? "2px solid #3B82F6" : B,
+                            border: isCtrlSelected ? "2px solid #2563EB" : isSwapped ? "2px solid #2563EB" : isBlink ? (blinkIsUrg ? "2px solid #EF4444" : "2px solid #F59E0B") : temRestr ? "2px solid #EF4444" : isHighlighted ? "2px solid #3B82F6" : B,
                             boxShadow: isCtrlSelected ? "inset 0 0 0 1px #93C5FD" : isHighlighted ? "inset 0 0 0 1px #93C5FD" : undefined,
-                            animation: isSwapped ? "swapFlash 1.2s ease 2" : undefined }}
+                            animation: isBlink ? (blinkIsUrg ? "blinkRed 1s ease 3" : "blinkYellow 1s ease 3") : isSwapped ? "swapFlash 1.2s ease 2" : undefined }}
                           onMouseEnter={opera ? e=>(e.currentTarget.style.filter="brightness(0.91)") : undefined}
                           onMouseLeave={opera ? e=>(e.currentTarget.style.filter="brightness(1)") : undefined}>
                           {opera ? (cellName || placeholder || "") : "—"}
@@ -2092,179 +2114,27 @@ export default function EscalaSemanal() {
         )
       })()}
 
-      {/* Modal de Alertas */}
-      {alertasModalOpen && (() => {
-        const todosAlerts = calcularAlertasSemanal()
-        const erros  = todosAlerts.filter(a => a.tipo === "erro")
-        const avisos = todosAlerts.filter(a => a.tipo === "aviso")
-        const infos  = todosAlerts.filter(a => a.tipo === "info")
-
-        // Filter by tipo
-        const byTipo = alertasTipo === "all" ? todosAlerts
-          : alertasTipo === "erro" ? erros
-          : alertasTipo === "aviso" ? avisos : infos
-
-        // Filter by dia (extract day from message)
-        const displayed = alertasDia
-          ? byTipo.filter(a => {
-              const ds = format(parseISO(alertasDia), "EEEE, d MMMM", { locale: ptBR })
-              return a.mensagem.startsWith(ds)
-            })
-          : byTipo
-
-        const tipoBtn = (tipo: typeof alertasTipo, label: string, count: number, color: string, bg: string) => (
-          <button
-            key={tipo}
-            onClick={() => setAlertasTipo(tipo)}
-            style={{
-              padding:"5px 11px",borderRadius:20,border:"none",cursor:"pointer",
-              fontSize:12,fontWeight:600,transition:"all 0.15s",whiteSpace:"nowrap",
-              background: alertasTipo === tipo ? color : "#F3F4F6",
-              color: alertasTipo === tipo ? "#fff" : "#6B7280",
-            }}
-          >
-            {label} {count > 0 && <span style={{
-              display:"inline-block",background: alertasTipo === tipo ? "rgba(255,255,255,0.3)" : bg,
-              color: alertasTipo === tipo ? "#fff" : color,
-              borderRadius:10,padding:"0 5px",fontSize:11,fontWeight:700,marginLeft:3,
-            }}>{count}</span>}
-          </button>
-        )
-
-        const ALERT_STYLE: Record<string, {border:string;bg:string;leftBar:string;titleColor:string}> = {
-          erro:  {border:"#FECACA",bg:"#FEF2F2",leftBar:"#EF4444",titleColor:"#991B1B"},
-          aviso: {border:"#FDE68A",bg:"#FFFBEB",leftBar:"#F59E0B",titleColor:"#92400E"},
-          info:  {border:"#BFDBFE",bg:"#EFF6FF",leftBar:"#3B82F6",titleColor:"#1E40AF"},
-        }
-        const ALERT_ICON: Record<string, string> = { erro:"🚨", aviso:"⚠️", info:"ℹ️" }
-
-        return (
-          <>
-            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",zIndex:59,animation:"fadeIn 0.2s ease"}} onClick={()=>setAlertasModalOpen(false)}/>
-            <div style={{
-              position:"fixed",top:0,right:0,bottom:0,width:400,maxWidth:"100vw",
-              background:"#fff",boxShadow:"-6px 0 32px rgba(0,0,0,0.18)",zIndex:60,
-              display:"flex",flexDirection:"column",animation:"slideLeftIn 0.28s cubic-bezier(0.34,1.56,0.64,1)",
-            }}>
-              {/* Header — dark with gradient */}
-              <div style={{
-                background:"linear-gradient(135deg,#1A2E44 0%,#1e3a5f 100%)",
-                padding:"18px 20px 16px",flex:"0 0 auto",
-              }}>
-                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:12}}>
-                  <div>
-                    <h3 style={{fontWeight:800,fontSize:17,color:"#fff",margin:"0 0 2px"}}>Alertas da Semana</h3>
-                    <p style={{fontSize:12,color:"rgba(255,255,255,0.55)",margin:0}}>
-                      {format(weekDays[0],"d",{locale:ptBR})} – {format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}
-                    </p>
-                  </div>
-                  <button onClick={()=>setAlertasModalOpen(false)} style={{background:"rgba(255,255,255,0.12)",border:"none",cursor:"pointer",padding:"6px",borderRadius:8,color:"#fff",lineHeight:0,marginLeft:8,flexShrink:0}}><X size={16}/></button>
-                </div>
-                {/* Stats summary */}
-                <div style={{display:"flex",gap:8}}>
-                  {[
-                    {count:erros.length,  label:"Erros",  bg:"#EF4444"},
-                    {count:avisos.length, label:"Avisos", bg:"#F59E0B"},
-                    {count:infos.length,  label:"Infos",  bg:"#3B82F6"},
-                  ].map(({count,label,bg}) => (
-                    <div key={label} style={{flex:1,background:"rgba(255,255,255,0.1)",borderRadius:8,padding:"6px 10px",textAlign:"center"}}>
-                      <div style={{fontSize:20,fontWeight:800,color: count > 0 ? bg : "rgba(255,255,255,0.3)",lineHeight:1}}>{count}</div>
-                      <div style={{fontSize:10,color:"rgba(255,255,255,0.5)",marginTop:2,letterSpacing:"0.05em",textTransform:"uppercase"}}>{label}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Filters */}
-              <div style={{padding:"12px 16px 8px",borderBottom:"1px solid #F0F0F0",flex:"0 0 auto",background:"#FAFAFA"}}>
-                {/* Tipo pills */}
-                <div style={{display:"flex",gap:6,marginBottom:8,overflowX:"auto",paddingBottom:2}}>
-                  {tipoBtn("all",  "Todos",  todosAlerts.length, "#374151","#E5E7EB")}
-                  {tipoBtn("erro", "Erros",  erros.length,       "#DC2626", "#FEE2E2")}
-                  {tipoBtn("aviso","Avisos", avisos.length,      "#D97706", "#FEF3C7")}
-                  {tipoBtn("info", "Info",   infos.length,       "#2563EB", "#DBEAFE")}
-                </div>
-                {/* Dia pills */}
-                <div style={{display:"flex",gap:5,overflowX:"auto",paddingBottom:2}}>
-                  <button
-                    onClick={() => setAlertasDia(null)}
-                    style={{padding:"3px 10px",borderRadius:12,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap",
-                      background: alertasDia === null ? "#1A2E44" : "#F3F4F6",
-                      color: alertasDia === null ? "#fff" : "#6B7280",transition:"all 0.12s"}}
-                  >
-                    Todos os dias
-                  </button>
-                  {weekDays.map((day, i) => {
-                    const ds = format(day, "yyyy-MM-dd")
-                    const label = `${DIAS_PT[i]} ${format(day,"d")}`
-                    const active = alertasDia === ds
-                    return (
-                      <button key={ds} onClick={() => setAlertasDia(active ? null : ds)}
-                        style={{padding:"3px 9px",borderRadius:12,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap",
-                          background: active ? "#1A2E44" : "#F3F4F6",
-                          color: active ? "#fff" : "#6B7280",transition:"all 0.12s"}}
-                      >{label}</button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Body */}
-              <div style={{overflowY:"auto",flex:1,padding:"14px 16px"}}>
-                {displayed.length === 0 ? (
-                  <div style={{textAlign:"center",padding:"48px 16px"}}>
-                    <div style={{fontSize:36,marginBottom:10}}>✅</div>
-                    <div style={{fontWeight:700,fontSize:14,color:"#374151"}}>
-                      {todosAlerts.length === 0 ? "Escala completa!" : "Sem alertas nesta seleção"}
-                    </div>
-                    <div style={{fontSize:12,color:"#9CA3AF",marginTop:4}}>
-                      {todosAlerts.length === 0 ? "Todos os postos estão cobertos." : "Tente mudar os filtros acima."}
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                    {displayed.map(a => {
-                      const s = ALERT_STYLE[a.tipo]
-                      return (
-                        <div key={a.id} style={{
-                          borderRadius:10,border:`1px solid ${s.border}`,borderLeft:`3px solid ${s.leftBar}`,
-                          background:s.bg,padding:"10px 12px",
-                        }}>
-                          <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
-                            <span style={{fontSize:14,lineHeight:"18px",flexShrink:0}}>{ALERT_ICON[a.tipo]}</span>
-                            <div style={{flex:1}}>
-                              <div style={{fontWeight:600,fontSize:12,color:s.titleColor,lineHeight:1.4}}>{a.mensagem}</div>
-                              {a.detalhe && <div style={{fontSize:11,color:"#6B7280",marginTop:4}}>↳ {a.detalhe}</div>}
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Footer */}
-              <div style={{padding:"12px 16px",borderTop:"1px solid #F0F0F0",flex:"0 0 auto"}}>
-                <button
-                  onClick={()=>setAlertasModalOpen(false)}
-                  style={{width:"100%",background:"#1A2E44",color:"#fff",border:"none",borderRadius:9,padding:"10px",cursor:"pointer",fontSize:13,fontWeight:700,letterSpacing:"0.02em",transition:"background 0.15s"}}
-                  onMouseEnter={e=>(e.currentTarget.style.background="#243d56")}
-                  onMouseLeave={e=>(e.currentTarget.style.background="#1A2E44")}
-                >
-                  Fechar
-                </button>
-              </div>
-            </div>
-          </>
-        )
-      })()}
+      {/* Painel de Alertas (componente partilhado) */}
+      <AlertPanel
+        open={alertasModalOpen}
+        onClose={() => setAlertasModalOpen(false)}
+        alertas={alertasUnificados}
+        titulo="Alertas da Semana"
+        subtitulo={`${format(weekDays[0],"d",{locale:ptBR})} – ${format(weekDays[6],"d 'de' MMMM yyyy",{locale:ptBR})}`}
+        onEyeClick={handleEyeClick}
+        dayFilters={weekDays.map((day, i) => ({
+          value: format(day, "yyyy-MM-dd"),
+          label: `${DIAS_PT[i]} ${format(day,"d")}`,
+        }))}
+      />
 
       <style>{`
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
         @keyframes swapFlash{0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,0)}25%,75%{box-shadow:0 0 0 4px rgba(37,99,235,0.55)}50%{box-shadow:0 0 0 6px rgba(37,99,235,0.85)}}
         @keyframes slideUp{from{opacity:0;transform:translateY(20px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
         @keyframes slideLeftIn{from{opacity:0;transform:translateX(100%)}to{opacity:1;transform:translateX(0)}}
+        @keyframes blinkRed{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}25%,75%{box-shadow:0 0 0 4px rgba(239,68,68,0.6)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0.9);background:#FEE2E2}}
+        @keyframes blinkYellow{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,0)}25%,75%{box-shadow:0 0 0 4px rgba(245,158,11,0.5)}50%{box-shadow:0 0 0 6px rgba(245,158,11,0.8);background:#FEF3C7}}
 
         /* Melhorias visuais da tabela */
         table tbody tr:nth-child(even) {
