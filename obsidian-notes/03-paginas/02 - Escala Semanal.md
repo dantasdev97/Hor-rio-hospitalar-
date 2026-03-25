@@ -1,6 +1,6 @@
 ---
 tags: [escala-semanal, postos, sincronização, troca-turno]
-updated: 2026-03-22
+updated: 2026-03-25
 ---
 
 # 07 — Escala Semanal
@@ -158,6 +158,16 @@ Retorna todos os turnos do auxiliar na semana actual (data, turnoLetra, posto, p
 | `swapping` | boolean | Troca em curso |
 | `ctrlHeld` | boolean | Ctrl pressionado |
 | `ctrlSelectedCell` | {data, turnoLetra, posto, auxId} | Célula seleccionada via Ctrl |
+| `swappedCells` | Set\<string\> | Células recentemente trocadas (flash visual) — chave: `"data\|turnoLetra\|posto"` |
+
+### Feedback Visual (Flash)
+Após confirmar troca, as duas células afectadas ficam com borda azul animada por ~2.5s via CSS `@keyframes swapFlash`. A chave do Set é `"data|turnoLetra|posto"`.
+
+### Mensagens de Confirmação (formato natural)
+```
+[Nome] faz Turno [M/T/N] em [RX URG] — Seg 4
+```
+Em vez das anteriores `"(Seg N RX_URG)"` — aplicado nos dois modais (botão Trocar + Ctrl+Click).
 
 ### Restrições
 - Trocas apenas em células single-person (não multi)

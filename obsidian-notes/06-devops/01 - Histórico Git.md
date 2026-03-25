@@ -1,6 +1,6 @@
 ---
 tags: [git, histórico, commits, desenvolvimento]
-updated: 2026-03-21
+updated: 2026-03-25
 ---
 
 # 23 — Histórico Git
@@ -86,6 +86,26 @@ e8f1e04  fix(alertas): corrigir deteção de turno N5 e melhorar alertas de carg
 ### Fase 8 — Documentação
 ```
 a1ccd14  docs: adicionar notas Obsidian com contexto completo do projecto
+```
+
+### Fase 9 — Troca de Turno (Swap)
+```
+28298da  feat: troca de turno (swap) na escala semanal
+         — botão "Trocar" no modal de célula
+         — modal 3 passos: aux → turno da semana → confirmação
+         — Ctrl+Click: selecção azul + modal confirmação directo
+         — executeSwap() com reverse sync para escala mensal
+         — mensagens naturais: "Faz Turno N em RX URG — Seg 4"
+
+b151af2  feat: swap v2 — mensagens naturais, flash visual e troca na mensal
+         — feedback visual: bordas azuis animadas (~2.5s) nas células trocadas
+         — @keyframes swapFlash em EscalaSemanal e EscalaMensal
+         — swap completo na EscalaMensal:
+           · botão "Trocar" no modal footer (quando turno atribuído)
+           · modal 3 passos: aux → turno do mês → confirmação
+           · Ctrl+Click: selecção azul + modal confirmação
+           · executeMensalSwap() com UPDATE/INSERT optimista
+           · swappedCellsMensal Set para flash visual
 ```
 
 ---

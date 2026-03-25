@@ -1,6 +1,6 @@
 ---
 tags: [escala-mensal, geração, alertas, pdf]
-updated: 2026-03-21
+updated: 2026-03-25
 ---
 
 # 06 — Escala Mensal
@@ -44,6 +44,50 @@ Página principal do sistema. Mostra a escala do mês completo num calendário t
 | `drawerAux` | Auxiliar\|null | Auxiliar no drawer lateral |
 | `openSec` | Record\<string,boolean\> | Secções de alertas expandidas |
 | `resolvidoBanner` | number | Nº de alertas recentemente resolvidos |
+
+---
+
+## 🔄 Troca de Turno (Swap Mensal)
+
+Permite trocar o turno de dois auxiliares em dias diferentes do mesmo mês. Dois mecanismos:
+
+### Mecanismo 1: Botão "Trocar" no Modal
+1. Clicar numa célula com turno atribuído → modal mostra botão **"Trocar"** no footer
+2. Clicar → modal de 3 passos:
+   - **Passo 1**: Lista de auxiliares com turnos no mês (excluindo source)
+   - **Passo 2**: Turnos do mês do auxiliar seleccionado
+   - **Passo 3**: Confirmação `"[AuxA] faz [N5] — 4 Seg" ↔ "[AuxB] faz [M3] — 10 Seg"`
+3. Confirmar → `executeMensalSwap()` executa a troca
+
+### Mecanismo 2: Ctrl+Click Quick Swap
+1. Manter **Ctrl** e clicar célula com turno → selecção azul (`#DBEAFE` / `#2563EB`)
+2. Ctrl+Click noutra célula de auxiliar diferente → modal confirmação
+3. Confirmar → troca automática
+
+### `executeMensalSwap(source, target)`
+Troca `turno_id` entre dois `EscalaRow`:
+1. UPDATE/INSERT source com `turno_id` do target
+2. UPDATE/INSERT target com `turno_id` do source
+3. Actualização local optimista de `setEscalas()`
+4. Flash visual (`swappedCellsMensal`) por ~2.5s
+5. Toast "✅ Troca realizada: AuxA ↔ AuxB"
+
+### `getAuxShiftsForMonth(auxId)`
+Retorna todos os turnos do auxiliar no mês: `{data, turnoId, turnoNome, dayNum}[]`.
+
+### Estado de Swap Mensal
+
+| State | Tipo | Propósito |
+|---|---|---|
+| `swapMensal` | boolean | Modal de swap aberto |
+| `swapMensalSource` | SwapMensalCell\|null | Célula origem `{auxId, data, turnoId, turnoNome}` |
+| `swapMensalTargetAuxId` | string\|null | Auxiliar alvo seleccionado (Passo 2) |
+| `swapMensalTargetShift` | SwapMensalCell\|null | Turno alvo seleccionado (Passo 3) |
+| `swapMensalConfirmOpen` | boolean | Modal confirmação Ctrl+Click |
+| `swappingMensal` | boolean | Troca em curso |
+| `ctrlHeldMensal` | boolean | Ctrl pressionado (listener separado) |
+| `ctrlSelMensal` | SwapMensalCell\|null | Célula seleccionada via Ctrl |
+| `swappedCellsMensal` | Set\<string\> | Células afectadas (flash visual) — chave: `"auxId_data"` |
 
 ---
 
