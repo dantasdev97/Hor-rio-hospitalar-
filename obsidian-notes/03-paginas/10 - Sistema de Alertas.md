@@ -1,130 +1,142 @@
 ---
-tags: [alertas, validação, erros, avisos]
-updated: 2026-03-21
+tags: [alertas, validação, erros, avisos, urgência]
+updated: 2026-03-25
 ---
 
-# 17 — Sistema de Alertas
+# 17 — Sistema de Alertas (v2 — Unificado)
 
 > [[00 - MOC (Índice)|← Índice]]
-> Função: `calcularAlertas()` em `src/pages/EscalaMensal.tsx`
+> Componente partilhado: `src/components/alerts/AlertPanel.tsx`
+> Tipos e constantes: `src/components/alerts/alertTypes.ts`
+> Cálculo: `calcularAlertas()` em `EscalaSemanal.tsx` e `EscalaMensal.tsx`
 
 ## 🎯 O Que É
 
-Sistema de validação em tempo real da escala mensal. Recalcula sempre que `escalas`, `auxiliares`, `turnos` ou o mês mudam. Retorna um array de `AlertaMensal[]`.
+Sistema de validação em tempo real para ambas as escalas (semanal + mensal). Usa um **componente partilhado** (`AlertPanel`) e **tipos unificados** (`AlertaUnificado`) para garantir consistência visual e funcional.
 
 ---
 
 ## 📊 Estrutura de um Alerta
 
 ```typescript
-type AlertaMensal = {
-  id: string        // Chave única para tracking de resoluções
-  tipo: 'erro' | 'aviso' | 'info'
-  categoria: 'ausencia' | 'cobertura' | 'descanso' | 'excesso'
+type AlertaUnificado = {
+  id: string
+  severidade: 'vermelho' | 'amarelo' | 'info'
+  categoria: 'cobertura_urg' | 'cobertura_geral' | 'descanso'
+            | 'excesso_mais' | 'excesso_menos' | 'ausencia' | 'outro'
   mensagem: string
-  dia?: number      // Dia do mês onde ocorre
-  auxNome?: string  // Nome do auxiliar
+  detalhe?: string
+  cellRef?: { data: string; turnoLetra: string; posto?: string; auxiliarId?: string }
+  isUrg: boolean
+  acao?: { label: string; auxId: string; dia: number }
 }
 ```
 
 ---
 
-## 🔴 Categorias e Regras
+## 🔴🟡 Classificação URG vs Não-URG
 
-### A) Ausências (`categoria: 'ausencia'`, tipo: `info`)
+### Postos Urgentes → alerta VERMELHO
 
-> Informa sobre ausências registadas no mês
-
-| Código | Mensagem gerada |
-|---|---|
-| `L` | "[Nome] — Licença de DD/MM a DD/MM" |
-| `Aci` | "[Nome] — Acidente de Trabalho de DD/MM a DD/MM" |
-| `FAA` | "[Nome] — Férias Ano Anterior de DD/MM a DD/MM" |
-| `Fe` | "[Nome] — Compensação de Feriado em DD/MM" |
-
----
-
-### B) Cobertura Nocturna (`categoria: 'cobertura'`)
-
-> Cada dia deve ter **exactamente 2** auxiliares nocturnos (RX URG + TAC 2)
-
-| Situação | Tipo | Mensagem |
+| Posto | Turnos | Notas |
 |---|---|---|
-| 0 nocturnos | `erro` | "Dia DD: sem cobertura nocturna" |
-| 1 nocturno | `erro` | "Dia DD: apenas 1 auxiliar nocturno ([nome])" |
-| > 2 nocturnos | `aviso` | "Dia DD: [N] auxiliares nocturnos (excesso)" |
+| RX URG | M, T, N | |
+| TAC 2 | M, T, N | |
+| EXAM1 (Eco URG) | M, T | Seg–Sáb apenas |
+| TRANSPORT (Transp URG) | M, T | Sem turno N |
 
----
+### Postos Não-Urgentes → alerta AMARELO
 
-### C) Cobertura EXAM1 (`categoria: 'cobertura'`)
-
-> EXAM1 precisa de auxiliar no turno M (erro) e T (aviso) nos dias úteis e sábados
-
-| Situação | Tipo | Mensagem |
+| Posto | Turnos | Notas |
 |---|---|---|
-| Sem M em dia útil/sábado | `erro` | "Dia DD (EXAM1): sem auxiliar no turno M" |
-| Sem T em dia útil/sábado | `aviso` | "Dia DD (EXAM1): sem auxiliar no turno T" |
+| TAC 1 | M, T | |
+| EXAM2 (Eco complementar) | M, T | |
+| SALA 6 | M | |
+| SALA 7 EXT | M, T | |
+
+A função `classificarCobertura(posto, turnoLetra)` em `alertTypes.ts` determina automaticamente a severidade e categoria.
 
 ---
 
-### D) Fim de Semana (`categoria: 'cobertura'`)
+## 📋 Categorias de Alertas (7 secções)
 
-> Auxiliares com `trabalha_fds = false` não podem ser escalados ao sábado/domingo
+### 1. Falta de Postos URG (`cobertura_urg`, borda vermelha)
+- Postos URG sem auxiliar atribuído
+- Turno Noite sem mínimo 2 auxiliares (RX URG + TAC 2)
 
-| Situação | Tipo | Mensagem |
-|---|---|---|
-| Aux FDS=false escalado ao FDS | `erro` | "DD/MM ([Dia]): [Nome] não trabalha fins de semana" |
+### 2. Postos sem Auxiliar (`cobertura_geral`, borda amarela)
+- Postos não-URG sem auxiliar atribuído
 
----
+### 3. Violações de Descanso (`descanso`, borda amarela)
+- Turno N seguido de M ou T no dia seguinte (< 11h descanso)
 
-### E) Descanso Pós-Noturno (`categoria: 'descanso'`)
+### 4. Horas a mais (`excesso_mais`, borda amarela)
+- Turnos nocturnos > maxTurnosNoturnosMes
+- Total turnos > maxTurnosMes
+- Horas > 160h/mês
 
-> Após turno N, o dia seguinte deve ter D e não pode ter M ou T (mínimo 11h descanso)
+### 5. Poucas horas (`excesso_menos`, borda azul)
+- Horas < 80h/mês
 
-| Situação | Tipo | Mensagem |
-|---|---|---|
-| N seguido de M ou T | `erro` | "Dia DD: [Nome] tem noturno e [M/T] no dia seguinte (< 11h descanso)" |
+### 6. Ausências Registadas (`ausencia`, borda azul)
+- Códigos especiais: L (licença), Aci (acidente), FAA (férias ano anterior), Fe (feriado)
+- Auxiliares sem turnos atribuídos
 
-> Configurável via `horasDescansMinimas` em [[21 - Configurações LocalStorage]]
-
----
-
-### F) Excessos Mensais (`categoria: 'excesso'`)
-
-| Situação | Tipo | Mensagem |
-|---|---|---|
-| Nocturnos > maxTurnosNoturnosMes | `aviso` | "[Nome]: [N] turnos nocturnos (máx. [X])" |
-| Total > maxTurnosMes | `aviso` | "[Nome]: [N] turnos no mês (máx. [X])" |
+### 7. Outros avisos (`outro`, borda cinza)
+- Avisos genéricos, marcáveis como resolvidos com ✓
 
 ---
 
-### G) Subcarregado (`categoria: 'excesso'`, tipo: `aviso`)
+## 🖥️ UI — AlertPanel (Componente Partilhado)
 
-> Auxiliar com menos de 15 turnos no mês
+### Header
+- Fundo escuro com gradiente (`#1A2E44`)
+- 3 contadores: **Urgentes** (vermelho) / **Avisos** (amarelo) / **Info** (azul)
 
-| Situação | Mensagem |
-|---|---|
-| Total < 15 | "[Nome]: apenas [N] turnos no mês (mínimo esperado: 15)" |
+### Filtros
+- Pills por tipo: Todos / Urgentes / Avisos / Info
+- Filtro por dia (opcional, usado na semanal)
 
-> ⚠️ O valor 15 está hard-coded (ver [[24 - Pendentes e TODOs]] — feature F3)
+### Secções colapsáveis (accordion)
+- Uma secção por categoria com ícone, contagem e seta
+- Alertas dentro de cada secção com borda colorida por severidade
+
+### Ícones de Ação por Alerta
+- 👁 **Eye** — Localizar na escala (faz piscar a célula correspondente)
+- ✕ **X** — Dispensar alerta (local, reset quando dados mudam)
+- ✓ **Check** — Marcar como resolvido (apenas categoria `outro`)
+
+### Botão de Ação
+- Alertas com `acao` mostram botão (ex: "Alocar substituto")
 
 ---
 
-## 🖥️ UI dos Alertas
+## ✨ Blink (Feedback Visual)
 
-- **Secções colapsáveis** por categoria (Ausências / Cobertura / Descanso / Excessos)
-- **Borda colorida** por gravidade:
-  - `erro` → vermelho
-  - `aviso` → amarelo/laranja
-  - `info` → azul
-- **Banner "N alerta(s) resolvido(s)"** — aparece por 3 segundos quando alertas desaparecem
-- **Badge no header** com total de alertas activos
+Ao clicar no ícone 👁 de um alerta:
+1. `blinkCell` state é preenchido com o `cellRef` do alerta
+2. A célula correspondente na tabela recebe animação CSS:
+   - `blinkRed` (3x 1s) para alertas URG
+   - `blinkYellow` (3x 1s) para alertas não-URG
+3. Após 3 segundos, o blink é limpo automaticamente
+
+### Semanal: Cores permanentes nas células vazias
+- Células URG vazias: fundo `#FEE2E2` (red-100)
+- Células não-URG vazias: fundo `#FEF9C3` (yellow-100)
+
+---
+
+## 🗂️ Texto PT-PT
+
+- Turnos: "Manhã", "Tarde", "Noite" (não "M", "T", "N")
+- Mensagens: "Precisa de Auxiliar" (não "Precisa de cobertura")
+- Constante `TURNO_FULL` em `alertTypes.ts`
 
 ---
 
 ## 🔗 Ver Também
 
-- [[06 - Escala Mensal]] — Onde calcularAlertas() vive
+- [[06 - Escala Mensal]] — Onde `calcularAlertas()` mensal vive
+- [[05 - Escala Semanal]] — Onde `calcularAlertasSemanal()` vive
 - [[18 - Códigos Especiais]] — Códigos que geram alertas de ausência
-- [[21 - Configurações LocalStorage]] — maxTurnosMes, maxTurnosNoturnosMes, horasDescansMinimas
-- [[24 - Pendentes e TODOs]] — Melhorias pendentes no sistema de alertas
+- [[21 - Configurações LocalStorage]] — maxTurnosMes, maxTurnosNoturnosMes

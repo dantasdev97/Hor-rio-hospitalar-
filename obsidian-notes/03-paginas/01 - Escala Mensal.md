@@ -42,8 +42,36 @@ Página principal do sistema. Mostra a escala do mês completo num calendário t
 | `selCodigo` | string\|null | Código especial seleccionado no modal |
 | `search` | string | Pesquisa no modal |
 | `drawerAux` | Auxiliar\|null | Auxiliar no drawer lateral |
-| `openSec` | Record\<string,boolean\> | Secções de alertas expandidas |
-| `resolvidoBanner` | number | Nº de alertas recentemente resolvidos |
+| `alertasModalOpen` | boolean | Painel de alertas aberto |
+| `blinkCell` | CellRef\|null | Célula a piscar (via eye icon) |
+| `blinkIsUrg` | boolean | Se o blink é vermelho (URG) ou amarelo |
+
+---
+
+## 🚨 Sistema de Alertas (v2 — Unificado)
+
+Painel de alertas partilhado com a semanal. Detecta problemas de cobertura, descanso, excessos, e ausências.
+
+### Categorias (7 secções)
+1. **Falta de Postos URG** (borda vermelha) — Postos críticos sem auxiliar
+2. **Postos sem Auxiliar** (borda amarela) — Postos não-URG vazios
+3. **Violações de Descanso** (borda amarela) — Turno N seguido de M/T no dia seguinte
+4. **Horas a mais** (borda amarela) — Excessos de turnos/horas
+5. **Poucas horas** (borda azul) — Défice de horas
+6. **Ausências Registadas** (borda azul) — Códigos especiais ou sem turnos
+7. **Outros avisos** (borda cinza) — Avisos genéricos
+
+### Ícones de Ação
+- 👁 **Eye** — Localizar na tabela (faz piscar a célula)
+- ✕ **X** — Dispensar alerta (local, reseta ao actualizar dados)
+- ✓ **Check** — Marcar como resolvido (apenas categoria "outro")
+
+### Componente
+- `AlertPanel` em `src/components/alerts/AlertPanel.tsx`
+- Tipos `AlertaUnificado` em `src/components/alerts/alertTypes.ts`
+- Classificação automática `classificarCobertura(posto, turnoLetra)`
+
+Ver [[10 - Sistema de Alertas]] para detalhes completos.
 
 ---
 

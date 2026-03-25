@@ -80,6 +80,38 @@ Vista semanal da escala organizada por **postos de trabalho** × **turnos** × *
 | `selPersonIds` | string[] | Pessoas seleccionadas (multi) |
 | `filterTab` | "available"\|"restricted"\|"allocated" | Tab activa no modal |
 | `search` | string | Pesquisa no modal |
+| `alertasModalOpen` | boolean | Painel de alertas aberto |
+| `blinkCell` | CellRef\|null | Célula a piscar (via eye icon) |
+| `blinkIsUrg` | boolean | Se o blink é vermelho (URG) ou amarelo |
+
+---
+
+## 🚨 Sistema de Alertas (v2 — Unificado)
+
+Painel de alertas partilhado com a mensal. Detecta problemas de cobertura por post + turno.
+
+### Postos Críticos (URG) → Alerta VERMELHO
+- **RX URG** (M, T, N) — urgência máxima
+- **TAC 2** (M, T, N) — cobertura nocturna crítica
+- **EXAM1** (M, T) — eco urgência
+- **TRANSPORT** (M, T) — transportes urgência
+
+### Postos Não-Urgentes → Alerta AMARELO
+- **TAC 1** (M, T), **EXAM2** (M, T), **SALA 6** (M), **SALA 7** (M, T)
+
+### Feedback Visual
+- **Cores permanentes** nas células vazias:
+  - Red-100 (`#FEE2E2`) para postos URG sem cobertura
+  - Yellow-100 (`#FEF9C3`) para postos não-URG sem cobertura
+- **Blink animation** (3 vezes 1s) ao clicar eye no painel
+  - Vermelho para URG, amarelo para não-URG
+
+### Componente
+- `AlertPanel` em `src/components/alerts/AlertPanel.tsx`
+- Tipos `AlertaUnificado` em `src/components/alerts/alertTypes.ts`
+- Cálculo `calcularAlertasSemanal()` retorna `AlertaUnificado[]`
+
+Ver [[10 - Sistema de Alertas]] para detalhes completos.
 
 ---
 
