@@ -1,6 +1,6 @@
 ---
 tags: [escala-mensal, geração, alertas, pdf]
-updated: 2026-03-25
+updated: 2026-03-26
 ---
 
 # 06 — Escala Mensal
@@ -75,30 +75,64 @@ Ver [[10 - Sistema de Alertas]] para detalhes completos.
 
 ---
 
-## 🔄 Troca de Turno (Swap Mensal)
+## 🔄 Troca de Turno (Swap Mensal v3)
 
-Permite trocar o turno de dois auxiliares em dias diferentes do mesmo mês. Dois mecanismos:
+Permite trocar o turno de dois auxiliares em dias diferentes do mesmo mês. Dois mecanismos — agora suportam células com **Folga (F)** e **Descanso (D)**.
 
 ### Mecanismo 1: Botão "Trocar" no Modal
 1. Clicar numa célula com turno atribuído → modal mostra botão **"Trocar"** no footer
 2. Clicar → modal de 3 passos:
    - **Passo 1**: Lista de auxiliares com turnos no mês (excluindo source)
    - **Passo 2**: Turnos do mês do auxiliar seleccionado
-   - **Passo 3**: Confirmação `"[AuxA] faz [N5] — 4 Seg" ↔ "[AuxB] faz [M3] — 10 Seg"`
+   - **Passo 3**: Confirmação com estado ANTES + secção **"Resultado:"** com estado DEPOIS
 3. Confirmar → `executeMensalSwap()` executa a troca
 
 ### Mecanismo 2: Ctrl+Click Quick Swap
-1. Manter **Ctrl** e clicar célula com turno → selecção azul (`#DBEAFE` / `#2563EB`)
-2. Ctrl+Click noutra célula de auxiliar diferente → modal confirmação
+1. Manter **Ctrl** e clicar célula com turno **ou F/D** → selecção azul (`#DBEAFE` / `#2563EB`)
+2. Ctrl+Click noutra célula de auxiliar diferente → modal confirmação com **"Resultado:"**
 3. Confirmar → troca automática
 
+### Suporte F/D no Ctrl+Click
+Células com Folga ou Descanso agora participam no swap via Ctrl+Click:
+- `canSwapCtrl = !!e?.turno_id || e?.codigo_especial === "F" || e?.codigo_especial === "D"`
+- `handleCtrlClickMensal` aceita `turnoId: null` + `codigoEspecial: "F"|"D"`
+- Nome exibido: "Folga" ou "Descanso" em vez de `"?"`
+
+### Tipo `SwapMensalCell` (actualizado)
+```ts
+type SwapMensalCell = {
+  auxId: string
+  data: string
+  turnoId: string | null        // null quando é F/D
+  turnoNome: string             // "M3", "N5", "Folga", "Descanso", ...
+  codigoEspecial?: string | null
+}
+```
+
 ### `executeMensalSwap(source, target)`
-Troca `turno_id` entre dois `EscalaRow`:
-1. UPDATE/INSERT source com `turno_id` do target
-2. UPDATE/INSERT target com `turno_id` do source
+Troca `turno_id` **e** `codigo_especial` entre dois `EscalaRow`:
+1. UPDATE/INSERT source com `turno_id` do target + `codigo_especial` do target
+2. UPDATE/INSERT target com `turno_id` do source + `codigo_especial` do source
 3. Actualização local optimista de `setEscalas()`
 4. Flash visual (`swappedCellsMensal`) por ~2.5s
 5. Toast "✅ Troca realizada: AuxA ↔ AuxB"
+
+### Secção "Resultado:" no Modal de Confirmação
+Após os dois cards (estado ANTES), aparece com **horário do turno**:
+```
+Resultado:
+[NomeA] fica com M3 (08:00–16:00) — [dia de A]
+[NomeB] fica com T2 (16:00–00:00) — [dia de B]
+```
+O horário é obtido via `turnos.find(t => t.id === turnoId)` → `horario_inicio`–`horario_fim`.
+
+### Logging para `trocas_log` (2026-03-26)
+Após swap bem-sucedido, `executeMensalSwap()` insere registo em `trocas_log`:
+- `tipo_escala: "mensal"`
+- `source_turno_info: { turnoId, turnoNome, codigoEspecial }`
+- `target_turno_info: { turnoId, turnoNome, codigoEspecial }`
+- Logging silencioso (try/catch sem propagação) — falha não bloqueia a troca
+- Ver [[15 - Livro de Trocas]] para gestão do histórico
 
 ### `getAuxShiftsForMonth(auxId)`
 Retorna todos os turnos do auxiliar no mês: `{data, turnoId, turnoNome, dayNum}[]`.
@@ -108,7 +142,7 @@ Retorna todos os turnos do auxiliar no mês: `{data, turnoId, turnoNome, dayNum}
 | State | Tipo | Propósito |
 |---|---|---|
 | `swapMensal` | boolean | Modal de swap aberto |
-| `swapMensalSource` | SwapMensalCell\|null | Célula origem `{auxId, data, turnoId, turnoNome}` |
+| `swapMensalSource` | SwapMensalCell\|null | Célula origem `{auxId, data, turnoId, turnoNome, codigoEspecial}` |
 | `swapMensalTargetAuxId` | string\|null | Auxiliar alvo seleccionado (Passo 2) |
 | `swapMensalTargetShift` | SwapMensalCell\|null | Turno alvo seleccionado (Passo 3) |
 | `swapMensalConfirmOpen` | boolean | Modal confirmação Ctrl+Click |

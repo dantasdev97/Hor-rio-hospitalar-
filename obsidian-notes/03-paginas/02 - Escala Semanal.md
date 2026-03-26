@@ -1,6 +1,6 @@
 ---
 tags: [escala-semanal, postos, sincronização, troca-turno]
-updated: 2026-03-25
+updated: 2026-03-26
 ---
 
 # 07 — Escala Semanal
@@ -83,6 +83,9 @@ Vista semanal da escala organizada por **postos de trabalho** × **turnos** × *
 | `alertasModalOpen` | boolean | Painel de alertas aberto |
 | `blinkCell` | CellRef\|null | Célula a piscar (via eye icon) |
 | `blinkIsUrg` | boolean | Se o blink é vermelho (URG) ou amarelo |
+| `multiPickerOpen` | boolean | Modal picker de aux para células multi-pessoa |
+| `multiPickerCell` | {data, turnoLetra, posto, auxIds}\|null | Célula multi em edição/swap |
+| `multiPickerCallback` | ((auxId:string)=>void)\|null | Callback após selecção no picker |
 
 ---
 
@@ -147,26 +150,60 @@ Verifica **hard-blocks**:
 
 ---
 
-## 🔄 Troca de Turno (Swap)
+## 🔄 Troca de Turno (Swap v3)
 
-Permite trocar dois auxiliares entre postos/turnos. Dois mecanismos:
+Permite trocar dois auxiliares entre postos/turnos. Dois mecanismos — agora suportam células **multi-pessoa** (EXAM1, EXAM2, TRANSPORT).
 
 ### Mecanismo 1: Botão no Modal
 1. Clicar numa célula com auxiliar atribuído → modal mostra botão **"Trocar"**
+   - Células single: usa o único aux directamente
+   - Células multi (EXAM1/EXAM2): abre picker para seleccionar qual aux trocar
 2. Clicar no botão → sub-vista de troca:
    - **Passo 1**: Lista de auxiliares com turnos na semana
    - **Passo 2**: Seleccionar turno do auxiliar alvo (cards com dia/turno/posto)
-   - **Passo 3**: Confirmação visual com preview da troca
+   - **Passo 3**: Confirmação visual + secção **"Resultado:"** com o estado final
 3. Confirmar → `executeSwap()` executa a troca com reverse sync
 
 ### Mecanismo 2: Ctrl+Click Quick Swap
 1. Manter **Ctrl** pressionado e clicar célula com aux → selecciona (destaque azul)
-2. Ctrl+Click noutra célula com aux diferente → modal de confirmação
+   - Células multi com 1 aux: comporta-se como single
+   - Células multi com >1 aux: **picker modal** para escolher qual aux
+2. Ctrl+Click noutra célula com aux diferente → modal de confirmação com **"Resultado:"**
 3. Confirmar → troca automática
 4. Soltar Ctrl ou perder foco → limpa selecção
 
+### Multi-picker Modal
+Aparece quando Ctrl+Click ou botão Trocar é acionado em célula com >1 aux.
+- Lista os nomes dos auxiliares presentes na célula
+- Ao clicar num → continua o fluxo normal de swap com esse aux como source
+- Backdrop escuro; cancelar fecha o picker sem acção
+
+### Secção "Resultado:" nos Modais de Confirmação
+Aparece antes dos botões em ambos os modais de confirmação, com **horário do turno**:
+```
+Resultado:
+[NomeA] faz Turno M (08:00–16:00) em [Posto B] — [dia B]
+[NomeB] faz Turno T (16:00–00:00) em [Posto A] — [dia A]
+```
+O horário é obtido via `turnosData.find(t => turnoToLetra(t) === turnoLetra)` → `horario_inicio`–`horario_fim`.
+
+### Logging para `trocas_log` (2026-03-26)
+Após swap bem-sucedido, `executeSwap()` insere registo em `trocas_log`:
+- `tipo_escala: "semanal"`
+- `source_turno_info: { turnoLetra, posto, postoLabel }`
+- `target_turno_info: { turnoLetra, posto, postoLabel }`
+- `postoLabel` obtido via `POSTOS.find(p => p.key === posto)?.nome`
+- Logging silencioso (try/catch sem propagação) — falha não bloqueia a troca
+- Ver [[15 - Livro de Trocas]] para gestão do histórico
+
+### `openSwapModeForAux(auxId: string)`
+Variante de `openSwapMode()` que recebe o auxId explicitamente — usada pelo botão Trocar em células multi-pessoa.
+
+### `handleCtrlClickWithAux(data, turnoLetra, posto, auxId)`
+Variante de `handleCtrlClick` que recebe o auxId explicitamente — usada pelo Ctrl+Click em células multi-pessoa.
+
 ### `executeSwap(source, target, targetAuxId)`
-Operação em 7 passos:
+Operação em 8 passos:
 1. DELETE AuxA da célula source (semanal)
 2. DELETE AuxB da célula target (semanal)
 3. INSERT AuxB na célula source
@@ -174,6 +211,7 @@ Operação em 7 passos:
 5. Reverse sync mensal: AuxB no turno de source
 6. Reverse sync mensal: AuxA no turno de target
 7. Cleanup mensal entries antigas + refetch
+8. INSERT em `trocas_log` (logging silencioso)
 
 ### `getAuxShiftsForWeek(auxId)`
 Retorna todos os turnos do auxiliar na semana actual (data, turnoLetra, posto, postoLabel).
@@ -191,6 +229,9 @@ Retorna todos os turnos do auxiliar na semana actual (data, turnoLetra, posto, p
 | `ctrlHeld` | boolean | Ctrl pressionado |
 | `ctrlSelectedCell` | {data, turnoLetra, posto, auxId} | Célula seleccionada via Ctrl |
 | `swappedCells` | Set\<string\> | Células recentemente trocadas (flash visual) — chave: `"data\|turnoLetra\|posto"` |
+| `multiPickerOpen` | boolean | Picker de aux para células multi-pessoa |
+| `multiPickerCell` | {data, turnoLetra, posto, auxIds}\|null | Célula multi em contexto |
+| `multiPickerCallback` | ((auxId:string)=>void)\|null | Acção após selecção no picker |
 
 ### Feedback Visual (Flash)
 Após confirmar troca, as duas células afectadas ficam com borda azul animada por ~2.5s via CSS `@keyframes swapFlash`. A chave do Set é `"data|turnoLetra|posto"`.
@@ -199,11 +240,16 @@ Após confirmar troca, as duas células afectadas ficam com borda azul animada p
 ```
 [Nome] faz Turno [M/T/N] em [RX URG] — Seg 4
 ```
-Em vez das anteriores `"(Seg N RX_URG)"` — aplicado nos dois modais (botão Trocar + Ctrl+Click).
+
+### Fix: Remoção de Aux em Células Multi (EXAM2 M)
+`isDisabledFinal` corrigido — auxiliar já seleccionado (`isSel`) numa célula multi nunca fica bloqueado, permitindo deseleccioná-lo:
+```ts
+const isDisabledFinal = (isSel && isDouble) ? false : (isBlocked || isDisabledMulti)
+```
 
 ### Restrições
-- Trocas apenas em células single-person (não multi)
 - Não é possível trocar aux consigo mesmo
+- Células multi suportadas: EXAM1 M/T (max 2), EXAM2 M (max 3), TRANSPORT M (max 2)
 - Ambos os sentidos reflectem na escala mensal
 
 ---
