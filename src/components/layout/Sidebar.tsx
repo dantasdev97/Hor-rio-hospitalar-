@@ -4,7 +4,7 @@ import {
   CalendarDays, Calendar, Users, Clock, Stethoscope,
   Settings, X, Hospital, LogOut, Link2, UserCircle2,
   Phone, Hash, Upload, CheckCircle2, Loader2,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, BookOpen,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/contexts/AuthContext"
@@ -38,6 +38,7 @@ const navGroups = [
     items: [
       { to: "/turnos",       label: "Turnos",          icon: Clock },
       { to: "/turno-postos", label: "Turnos + Postos", icon: Link2 },
+      { to: "/livro-trocas", label: "Livro de Trocas", icon: BookOpen },
     ],
   },
   {
@@ -84,10 +85,17 @@ function PerfilModal({ open, onClose }: { open: boolean; onClose: () => void }) 
     reader.readAsDataURL(file)
   }
 
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
   async function handleSave() {
     setSaving(true)
-    await savePerfil(form)
+    setErrorMsg(null)
+    const result = await savePerfil(form)
     setSaving(false)
+    if (!result.success) {
+      setErrorMsg(result.error ?? "Erro ao guardar perfil.")
+      return
+    }
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
@@ -154,6 +162,12 @@ function PerfilModal({ open, onClose }: { open: boolean; onClose: () => void }) 
             </div>
           </div>
         </div>
+
+        {errorMsg && (
+          <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+            {errorMsg}
+          </div>
+        )}
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="outline" onClick={onClose} size="sm">Fechar</Button>

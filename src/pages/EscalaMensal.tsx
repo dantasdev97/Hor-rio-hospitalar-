@@ -566,6 +566,18 @@ export default function EscalaMensal() {
       const flashKeys = new Set([`${source.auxId}_${source.data}`, `${target.auxId}_${target.data}`])
       setSwappedCellsMensal(flashKeys)
       setTimeout(() => setSwappedCellsMensal(new Set()), 2500)
+      // Log da troca
+      try {
+        await supabase.from("trocas_log").insert({
+          tipo_escala: "mensal",
+          source_aux_id: source.auxId,
+          target_aux_id: target.auxId,
+          source_data: source.data,
+          target_data: target.data,
+          source_turno_info: { turnoId: source.turnoId, turnoNome: source.turnoNome, codigoEspecial: source.codigoEspecial ?? null },
+          target_turno_info: { turnoId: target.turnoId, turnoNome: target.turnoNome, codigoEspecial: target.codigoEspecial ?? null },
+        })
+      } catch { /* logging failure should not break the swap */ }
       const nomeA = auxiliares.find(a => a.id === source.auxId)?.nome?.split(" ")[0] ?? "?"
       const nomeB = auxiliares.find(a => a.id === target.auxId)?.nome?.split(" ")[0] ?? "?"
       showToastMsg(`✅ Troca realizada: ${nomeA} ↔ ${nomeB}`)
@@ -1893,11 +1905,19 @@ export default function EscalaMensal() {
                   </div>
                 </div>
               </div>
-              <div style={{margin:"0 0 1rem",padding:"10px 14px",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:10,fontSize:12,color:"#475569"}}>
-                <div style={{fontWeight:700,marginBottom:5,color:"#334155"}}>Resultado:</div>
-                <div>{auxA?.nome?.split(" ")[0]} fica com <strong>{swapMensalTargetShift.turnoNome}</strong> — {labelA}</div>
-                <div style={{marginTop:3}}>{auxB?.nome?.split(" ")[0]} fica com <strong>{swapMensalSource.turnoNome}</strong> — {labelB}</div>
-              </div>
+              {(() => {
+                const tResultA = turnos.find(t => t.id === swapMensalTargetShift.turnoId)
+                const tResultB = turnos.find(t => t.id === swapMensalSource.turnoId)
+                const infoA = tResultA ? `${swapMensalTargetShift.turnoNome} (${tResultA.horario_inicio}–${tResultA.horario_fim})` : swapMensalTargetShift.turnoNome
+                const infoB = tResultB ? `${swapMensalSource.turnoNome} (${tResultB.horario_inicio}–${tResultB.horario_fim})` : swapMensalSource.turnoNome
+                return (
+                  <div style={{margin:"0 0 1rem",padding:"10px 14px",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:10,fontSize:12,color:"#475569"}}>
+                    <div style={{fontWeight:700,marginBottom:5,color:"#334155"}}>Resultado:</div>
+                    <div>{auxA?.nome?.split(" ")[0]} fica com <strong>{infoA}</strong> — {labelA}</div>
+                    <div style={{marginTop:3}}>{auxB?.nome?.split(" ")[0]} fica com <strong>{infoB}</strong> — {labelB}</div>
+                  </div>
+                )
+              })()}
               <div style={{display:"flex",gap:8}}>
                 <button onClick={()=>setSwapMensalConfirmOpen(false)} style={{flex:1,padding:"0.65rem",background:"#F4F4F5",border:"none",borderRadius:9,cursor:"pointer",fontSize:13,fontWeight:600,color:"#374151"}}>Cancelar</button>
                 <button onClick={()=>executeMensalSwap(swapMensalSource!, swapMensalTargetShift!)} disabled={swappingMensal}

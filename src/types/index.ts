@@ -64,3 +64,18 @@ export interface Restricao {
   data_inicio: string | null
   data_fim: string | null
 }
+
+export interface TrocaLog {
+  id: string
+  created_at: string
+  tipo_escala: 'semanal' | 'mensal'
+  source_aux_id: string
+  target_aux_id: string
+  source_data: string
+  target_data: string
+  source_turno_info: Record<string, unknown>
+  target_turno_info: Record<string, unknown>
+  revertido: boolean
+  revertido_at: string | null
+  apagado: boolean
+}

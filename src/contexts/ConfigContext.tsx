@@ -60,14 +60,16 @@ const defaultPerfil: PerfilCoordenador = {
 
 // ─── Context ──────────────────────────────────────────────────────────────────
 
+export interface SaveResult { success: boolean; error?: string }
+
 interface ConfigContextValue {
   empresa: EmpresaConfig
   horarios: HorariosConfig
   perfil: PerfilCoordenador
   loadingConfig: boolean
-  saveEmpresa: (c: EmpresaConfig) => Promise<void>
-  saveHorarios: (c: HorariosConfig) => Promise<void>
-  savePerfil: (p: PerfilCoordenador) => Promise<void>
+  saveEmpresa: (c: EmpresaConfig) => Promise<SaveResult>
+  saveHorarios: (c: HorariosConfig) => Promise<SaveResult>
+  savePerfil: (p: PerfilCoordenador) => Promise<SaveResult>
 }
 
 const ConfigContext = createContext<ConfigContextValue | null>(null)
@@ -122,33 +124,57 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     load()
   }, [user?.id])
 
-  async function saveEmpresa(c: EmpresaConfig) {
+  async function saveEmpresa(c: EmpresaConfig): Promise<SaveResult> {
+    const prev = empresa
     setEmpresa(c)
-    await supabase
-      .from("configuracoes")
-      .upsert({ chave: "empresa", valor: JSON.parse(JSON.stringify(c)), updated_at: new Date().toISOString() })
+    try {
+      const { error } = await supabase
+        .from("configuracoes")
+        .upsert({ chave: "empresa", valor: JSON.parse(JSON.stringify(c)), updated_at: new Date().toISOString() })
+      if (error) { setEmpresa(prev); return { success: false, error: error.message } }
+      return { success: true }
+    } catch (err: unknown) {
+      setEmpresa(prev)
+      return { success: false, error: err instanceof Error ? err.message : "Erro desconhecido" }
+    }
   }
 
-  async function saveHorarios(c: HorariosConfig) {
+  async function saveHorarios(c: HorariosConfig): Promise<SaveResult> {
+    const prev = horarios
     setHorarios(c)
-    await supabase
-      .from("configuracoes")
-      .upsert({ chave: "horarios", valor: JSON.parse(JSON.stringify(c)), updated_at: new Date().toISOString() })
+    try {
+      const { error } = await supabase
+        .from("configuracoes")
+        .upsert({ chave: "horarios", valor: JSON.parse(JSON.stringify(c)), updated_at: new Date().toISOString() })
+      if (error) { setHorarios(prev); return { success: false, error: error.message } }
+      return { success: true }
+    } catch (err: unknown) {
+      setHorarios(prev)
+      return { success: false, error: err instanceof Error ? err.message : "Erro desconhecido" }
+    }
   }
 
-  async function savePerfil(p: PerfilCoordenador) {
-    if (!user?.id) return
+  async function savePerfil(p: PerfilCoordenador): Promise<SaveResult> {
+    if (!user?.id) return { success: false, error: "Utilizador não autenticado" }
+    const prev = perfil
     setPerfil(p)
-    await supabase
-      .from("perfil_coordenador")
-      .upsert({
-        user_id: user.id,
-        nome: p.nome,
-        telemovel: p.telemovel,
-        numero_mecanografico: p.numero_mecanografico,
-        foto: p.foto,
-        updated_at: new Date().toISOString(),
-      })
+    try {
+      const { error } = await supabase
+        .from("perfil_coordenador")
+        .upsert({
+          user_id: user.id,
+          nome: p.nome,
+          telemovel: p.telemovel,
+          numero_mecanografico: p.numero_mecanografico,
+          foto: p.foto,
+          updated_at: new Date().toISOString(),
+        })
+      if (error) { setPerfil(prev); return { success: false, error: error.message } }
+      return { success: true }
+    } catch (err: unknown) {
+      setPerfil(prev)
+      return { success: false, error: err instanceof Error ? err.message : "Erro desconhecido" }
+    }
   }
 
   return (

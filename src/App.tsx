@@ -11,6 +11,7 @@ import EscalaSemanal from "@/pages/EscalaSemanal"
 import EscalaMensal from "@/pages/EscalaMensal"
 import Configuracoes from "@/pages/Configuracoes"
 import VincularTurnoPosto from "@/pages/VincularTurnoPosto"
+import LivroTrocas from "@/pages/LivroTrocas"
 
 // ─── Loading screen while session resolves ───────────────────────────────────
 function LoadingScreen() {
@@ -76,6 +77,7 @@ function AppRoutes() {
         <Route path="turno-postos" element={<VincularTurnoPosto />} />
         <Route path="doutores" element={<Doutores />} />
         <Route path="restricoes" element={<Restricoes />} />
+        <Route path="livro-trocas" element={<LivroTrocas />} />
         <Route path="configuracoes" element={<Configuracoes />} />
       </Route>
 

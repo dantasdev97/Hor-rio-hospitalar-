@@ -216,17 +216,24 @@ function TabEmpresa() {
   const [config, setConfig] = useState<EmpresaConfig>(empresa)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   function update(key: keyof EmpresaConfig, value: string | null) {
     setConfig((prev) => ({ ...prev, [key]: value }))
     setSaved(false)
+    setErrorMsg(null)
   }
 
   async function handleSave() {
     setSaving(true)
-    await saveEmpresa(config)
+    setErrorMsg(null)
+    const result = await saveEmpresa(config)
     setSaving(false)
+    if (!result.success) {
+      setErrorMsg(result.error ?? "Erro ao guardar configurações.")
+      return
+    }
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }
@@ -326,6 +333,12 @@ function TabEmpresa() {
         </CardContent>
       </Card>
 
+      {errorMsg && (
+        <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700 animate-in fade-in duration-200">
+          {errorMsg}
+        </div>
+      )}
+
       <div className="flex justify-end animate-in fade-in slide-in-from-bottom duration-500 delay-300">
         <Button onClick={handleSave} disabled={saving} className="min-w-[150px] transition-all hover:shadow-lg">
           {saving
@@ -347,21 +360,29 @@ function TabHorarios() {
   const [config, setConfig] = useState<HorariosConfig>(horarios)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   function toggle(key: keyof HorariosConfig) {
     setConfig((prev) => ({ ...prev, [key]: !prev[key] }))
     setSaved(false)
+    setErrorMsg(null)
   }
 
   function setNum(key: keyof HorariosConfig, value: number) {
     setConfig((prev) => ({ ...prev, [key]: value }))
     setSaved(false)
+    setErrorMsg(null)
   }
 
   async function handleSave() {
     setSaving(true)
-    await saveHorarios(config)
+    setErrorMsg(null)
+    const result = await saveHorarios(config)
     setSaving(false)
+    if (!result.success) {
+      setErrorMsg(result.error ?? "Erro ao guardar horários.")
+      return
+    }
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }
@@ -460,6 +481,12 @@ function TabHorarios() {
           </div>
         </CardContent>
       </Card>
+
+      {errorMsg && (
+        <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700 animate-in fade-in duration-200">
+          {errorMsg}
+        </div>
+      )}
 
       <div className="flex justify-end animate-in fade-in slide-in-from-bottom duration-500 delay-300">
         <Button onClick={handleSave} disabled={saving} className="min-w-[150px] transition-all hover:shadow-lg">

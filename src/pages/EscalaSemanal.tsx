@@ -995,6 +995,21 @@ export default function EscalaSemanal() {
       // 7. Refresh mensal entries
       await refetchMensalEntries()
 
+      // 8. Log da troca
+      try {
+        const postoLabelSource = POSTOS.find(p => p.key === source.posto)?.label ?? source.posto
+        const postoLabelTarget = POSTOS.find(p => p.key === target.posto)?.label ?? target.posto
+        await supabase.from("trocas_log").insert({
+          tipo_escala: "semanal",
+          source_aux_id: auxA,
+          target_aux_id: auxB,
+          source_data: source.data,
+          target_data: target.data,
+          source_turno_info: { turnoLetra: source.turnoLetra, posto: source.posto, postoLabel: postoLabelSource },
+          target_turno_info: { turnoLetra: target.turnoLetra, posto: target.posto, postoLabel: postoLabelTarget },
+        })
+      } catch { /* logging failure should not break the swap */ }
+
       // Close modals and show success
       setSwapConfirmOpen(false)
       closeSwapMode()
@@ -1911,11 +1926,19 @@ export default function EscalaSemanal() {
                     </div>
                   </div>
                   {/* Resultado */}
-                  <div style={{ margin:"0 20px 12px",padding:"10px 14px",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:"10px",fontSize:"12px",color:"#475569" }}>
-                    <div style={{ fontWeight:700,marginBottom:5,color:"#334155" }}>Resultado:</div>
-                    <div>{getFirstName(sourceAuxNome)} faz Turno {swapTargetCell.turnoLetra} em {targetPostoLabel} — {targetDayLabel}</div>
-                    <div style={{ marginTop:3 }}>{getFirstName(targetAuxNome)} faz Turno {swapSourceCell.turnoLetra} em {sourcePostoLabel} — {sourceDayLabel}</div>
-                  </div>
+                  {(() => {
+                    const tInfoTarget = turnosData.find(t => turnoToLetra(t) === swapTargetCell.turnoLetra)
+                    const tInfoSource = turnosData.find(t => turnoToLetra(t) === swapSourceCell.turnoLetra)
+                    const hTarget = tInfoTarget ? ` (${tInfoTarget.horario_inicio}–${tInfoTarget.horario_fim})` : ""
+                    const hSource = tInfoSource ? ` (${tInfoSource.horario_inicio}–${tInfoSource.horario_fim})` : ""
+                    return (
+                      <div style={{ margin:"0 20px 12px",padding:"10px 14px",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:"10px",fontSize:"12px",color:"#475569" }}>
+                        <div style={{ fontWeight:700,marginBottom:5,color:"#334155" }}>Resultado:</div>
+                        <div>{getFirstName(sourceAuxNome)} faz Turno {swapTargetCell.turnoLetra}{hTarget} em {targetPostoLabel} — {targetDayLabel}</div>
+                        <div style={{ marginTop:3 }}>{getFirstName(targetAuxNome)} faz Turno {swapSourceCell.turnoLetra}{hSource} em {sourcePostoLabel} — {sourceDayLabel}</div>
+                      </div>
+                    )
+                  })()}
                   <div style={{ padding:"8px 20px 16px",display:"flex",gap:"8px",justifyContent:"flex-end" }}>
                     <button onClick={closeSwapMode} style={{ background:"#F4F4F4",border:"none",borderRadius:"8px",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#555" }}>Cancelar</button>
                     <button
@@ -2155,11 +2178,19 @@ export default function EscalaSemanal() {
                 </div>
               </div>
               {/* Resultado da troca */}
-              <div style={{ margin:"0 0 1rem",padding:"10px 14px",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:"10px",fontSize:"12px",color:"#475569" }}>
-                <div style={{ fontWeight:700,marginBottom:6,color:"#334155" }}>Resultado:</div>
-                <div>{getFirstName(nomeA)} faz Turno {swapTargetCell.turnoLetra} em {postoB} — {dayB}</div>
-                <div style={{ marginTop:3 }}>{getFirstName(nomeB)} faz Turno {swapSourceCell.turnoLetra} em {postoA} — {dayA}</div>
-              </div>
+              {(() => {
+                const tInfoB = turnosData.find(t => turnoToLetra(t) === swapTargetCell.turnoLetra)
+                const tInfoA = turnosData.find(t => turnoToLetra(t) === swapSourceCell.turnoLetra)
+                const hB = tInfoB ? ` (${tInfoB.horario_inicio}–${tInfoB.horario_fim})` : ""
+                const hA = tInfoA ? ` (${tInfoA.horario_inicio}–${tInfoA.horario_fim})` : ""
+                return (
+                  <div style={{ margin:"0 0 1rem",padding:"10px 14px",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:"10px",fontSize:"12px",color:"#475569" }}>
+                    <div style={{ fontWeight:700,marginBottom:6,color:"#334155" }}>Resultado:</div>
+                    <div>{getFirstName(nomeA)} faz Turno {swapTargetCell.turnoLetra}{hB} em {postoB} — {dayB}</div>
+                    <div style={{ marginTop:3 }}>{getFirstName(nomeB)} faz Turno {swapSourceCell.turnoLetra}{hA} em {postoA} — {dayA}</div>
+                  </div>
+                )
+              })()}
               <div style={{ display:"flex",gap:8 }}>
                 <button onClick={() => { setSwapConfirmOpen(false); setCtrlSelectedCell(null) }}
                   style={{ flex:1,padding:"0.65rem",background:"#F4F4F5",border:"none",borderRadius:9,cursor:"pointer",fontSize:13,fontWeight:600,color:"#374151" }}>Cancelar</button>
