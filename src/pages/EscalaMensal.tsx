@@ -193,7 +193,7 @@ export default function EscalaMensal() {
   const exportMenuRef = useRef<HTMLDivElement>(null)
 
   // ── Swap Mensal state ──────────────────────────────────────────────────────
-  type SwapMensalCell = { auxId: string; data: string; turnoId: string; turnoNome: string }
+  type SwapMensalCell = { auxId: string; data: string; turnoId: string | null; turnoNome: string; codigoEspecial?: string | null }
   const [swapMensal, setSwapMensal]               = useState(false)
   const [swapMensalSource, setSwapMensalSource]   = useState<SwapMensalCell | null>(null)
   const [swapMensalTargetAuxId, setSwapMensalTargetAuxId] = useState<string | null>(null)
@@ -507,9 +507,14 @@ export default function EscalaMensal() {
   function handleCtrlClickMensal(auxId: string, day: number) {
     const data = mkDateStr(day)
     const esc = escalas.find(e => e.auxiliar_id === auxId && e.data === data)
-    if (!esc?.turno_id) return
-    const turnoNome = turnos.find(t => t.id === esc.turno_id)?.nome ?? "?"
-    const cell: SwapMensalCell = { auxId, data, turnoId: esc.turno_id, turnoNome }
+    if (!esc) return
+    if (!esc.turno_id && !esc.codigo_especial) return
+    const turnoNome = esc.turno_id
+      ? (turnos.find(t => t.id === esc.turno_id)?.nome ?? "?")
+      : esc.codigo_especial === "F" ? "Folga"
+      : esc.codigo_especial === "D" ? "Descanso"
+      : (esc.codigo_especial ?? "?")
+    const cell: SwapMensalCell = { auxId, data, turnoId: esc.turno_id, turnoNome, codigoEspecial: esc.codigo_especial }
     if (!ctrlSelMensal) {
       setCtrlSelMensal(cell)
     } else {
@@ -538,24 +543,24 @@ export default function EscalaMensal() {
       const escA = escalas.find(e => e.auxiliar_id === source.auxId && e.data === source.data)
       const escB = escalas.find(e => e.auxiliar_id === target.auxId && e.data === target.data)
       if (escA) {
-        await supabase.from("escalas").update({ turno_id: target.turnoId, codigo_especial: null }).eq("id", escA.id)
+        await supabase.from("escalas").update({ turno_id: target.turnoId ?? null, codigo_especial: target.codigoEspecial ?? null }).eq("id", escA.id)
       } else {
-        await supabase.from("escalas").insert({ auxiliar_id: source.auxId, data: source.data, tipo_escala: "mensal", status: "alocado", turno_id: target.turnoId, codigo_especial: null })
+        await supabase.from("escalas").insert({ auxiliar_id: source.auxId, data: source.data, tipo_escala: "mensal", status: "alocado", turno_id: target.turnoId ?? null, codigo_especial: target.codigoEspecial ?? null })
       }
       if (escB) {
-        await supabase.from("escalas").update({ turno_id: source.turnoId, codigo_especial: null }).eq("id", escB.id)
+        await supabase.from("escalas").update({ turno_id: source.turnoId ?? null, codigo_especial: source.codigoEspecial ?? null }).eq("id", escB.id)
       } else {
-        await supabase.from("escalas").insert({ auxiliar_id: target.auxId, data: target.data, tipo_escala: "mensal", status: "alocado", turno_id: source.turnoId, codigo_especial: null })
+        await supabase.from("escalas").insert({ auxiliar_id: target.auxId, data: target.data, tipo_escala: "mensal", status: "alocado", turno_id: source.turnoId ?? null, codigo_especial: source.codigoEspecial ?? null })
       }
       // Optimistic local update
       setEscalas(prev => {
         let next = [...prev]
         const idxA = next.findIndex(e => e.auxiliar_id === source.auxId && e.data === source.data)
         const idxB = next.findIndex(e => e.auxiliar_id === target.auxId && e.data === target.data)
-        if (idxA >= 0) next[idxA] = { ...next[idxA], turno_id: target.turnoId, codigo_especial: null }
-        else next.push({ id: `tmp_${Date.now()}_a`, data: source.data, auxiliar_id: source.auxId, turno_id: target.turnoId, codigo_especial: null })
-        if (idxB >= 0) next[idxB] = { ...next[idxB], turno_id: source.turnoId, codigo_especial: null }
-        else next.push({ id: `tmp_${Date.now()}_b`, data: target.data, auxiliar_id: target.auxId, turno_id: source.turnoId, codigo_especial: null })
+        if (idxA >= 0) next[idxA] = { ...next[idxA], turno_id: target.turnoId ?? null, codigo_especial: target.codigoEspecial ?? null }
+        else next.push({ id: `tmp_${Date.now()}_a`, data: source.data, auxiliar_id: source.auxId, turno_id: target.turnoId ?? null, codigo_especial: target.codigoEspecial ?? null })
+        if (idxB >= 0) next[idxB] = { ...next[idxB], turno_id: source.turnoId ?? null, codigo_especial: source.codigoEspecial ?? null }
+        else next.push({ id: `tmp_${Date.now()}_b`, data: target.data, auxiliar_id: target.auxId, turno_id: source.turnoId ?? null, codigo_especial: source.codigoEspecial ?? null })
         return next
       })
       const flashKeys = new Set([`${source.auxId}_${source.data}`, `${target.auxId}_${target.data}`])
@@ -1533,15 +1538,16 @@ export default function EscalaMensal() {
                           const isCtrlSel = ctrlSelMensal && ctrlSelMensal.auxId===aux.id && ctrlSelMensal.data===dateStr
                           const isSwappedM = swappedCellsMensal.has(`${aux.id}_${dateStr}`)
                           const hasTurno = !!e?.turno_id
+                          const canSwapCtrl = !!e?.turno_id || e?.codigo_especial === "F" || e?.codigo_especial === "D"
                           const isBlink = blinkCell && blinkCell.data === dateStr && (blinkCell.auxiliarId === aux.id || !blinkCell.auxiliarId)
                           return(
                             <td key={d}
                               onClick={()=>{
-                                if (ctrlHeldMensal && hasTurno) { handleCtrlClickMensal(aux.id, d) }
+                                if (ctrlHeldMensal && canSwapCtrl) { handleCtrlClickMensal(aux.id, d) }
                                 else { openCell(aux.id,d) }
                               }}
                               title={di?.code??(di?.isSemanal?"(da escala semanal)":"")}
-                              style={{ border:`2px solid ${isCtrlSel?"#2563EB":isSwappedM?"#2563EB":isBlink?(blinkIsUrg?"#EF4444":"#F59E0B"):di?.isSemanal?"#6366F1":"#CCC"}`,padding:"2px 0",textAlign:"center",cursor:ctrlHeldMensal&&hasTurno?"crosshair":"pointer",background:isCtrlSel?"#DBEAFE":bg,color:di?di.text:"#374151",fontWeight:di?700:400,fontSize:10,minWidth:30,userSelect:"none",transition:"filter 0.1s",animation:fl?"cellFlash 0.8s ease":isSwappedM?"swapFlash 1.2s ease 2":isBlink?(blinkIsUrg?"blinkRed 1s ease 3":"blinkYellow 1s ease 3"):"none",fontStyle:di?.isSemanal?"italic":"normal",opacity:di?.isSemanal?0.8:1 }}
+                              style={{ border:`2px solid ${isCtrlSel?"#2563EB":isSwappedM?"#2563EB":isBlink?(blinkIsUrg?"#EF4444":"#F59E0B"):di?.isSemanal?"#6366F1":"#CCC"}`,padding:"2px 0",textAlign:"center",cursor:ctrlHeldMensal&&canSwapCtrl?"crosshair":"pointer",background:isCtrlSel?"#DBEAFE":bg,color:di?di.text:"#374151",fontWeight:di?700:400,fontSize:10,minWidth:30,userSelect:"none",transition:"filter 0.1s",animation:fl?"cellFlash 0.8s ease":isSwappedM?"swapFlash 1.2s ease 2":isBlink?(blinkIsUrg?"blinkRed 1s ease 3":"blinkYellow 1s ease 3"):"none",fontStyle:di?.isSemanal?"italic":"normal",opacity:di?.isSemanal?0.8:1 }}
                               onMouseEnter={ev=>(ev.currentTarget.style.filter="brightness(0.88)")}
                               onMouseLeave={ev=>(ev.currentTarget.style.filter="brightness(1)")}>
                               {di?.code??""}
@@ -1870,13 +1876,27 @@ export default function EscalaMensal() {
             <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#fff",borderRadius:16,zIndex:63,width:380,maxWidth:"92vw",boxShadow:"0 24px 64px rgba(0,0,0,0.22)",padding:"1.75rem 1.5rem",animation:"mSlideUp 0.2s cubic-bezier(0.34,1.56,0.64,1)"}}>
               <div style={{width:44,height:44,borderRadius:"50%",background:"#EFF6FF",border:"1px solid #BFDBFE",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 1rem"}}><ArrowLeftRight size={20} color="#2563EB"/></div>
               <h3 style={{textAlign:"center",fontSize:15,fontWeight:700,margin:"0 0 1rem",color:"#111"}}>Confirmar Troca</h3>
-              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:"1.5rem"}}>
-                {[{aux:auxA,turno:swapMensalTargetShift.turnoNome,label:labelA},{aux:auxB,turno:swapMensalSource.turnoNome,label:labelB}].map((item,i)=>(
-                  <div key={i} style={{background:"#F0F9FF",border:"1.5px solid #BAE6FD",borderRadius:10,padding:"10px 14px"}}>
-                    <div style={{fontWeight:700,fontSize:13,color:"#0C4A6E"}}>{item.aux?.nome}</div>
-                    <div style={{fontSize:11,color:"#0369A1",marginTop:2}}>Faz Turno <strong>{item.turno}</strong> — {item.label}</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:"0.75rem"}}>
+                <div style={{background:"#F0F9FF",border:"1.5px solid #BAE6FD",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:32,height:32,borderRadius:8,background:"#2563EB",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0}}>{auxA?.nome?.split(" ").map((n:string)=>n[0]).slice(0,2).join("") ?? "?"}</div>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:13,color:"#0C4A6E"}}>{auxA?.nome}</div>
+                    <div style={{fontSize:11,color:"#0369A1",marginTop:2}}>Faz <strong>{swapMensalSource.turnoNome}</strong> — {labelA}</div>
                   </div>
-                ))}
+                </div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center"}}><ArrowLeftRight size={16} color="#2563EB"/></div>
+                <div style={{background:"#F0F9FF",border:"1.5px solid #BAE6FD",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:32,height:32,borderRadius:8,background:"#2563EB",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0}}>{auxB?.nome?.split(" ").map((n:string)=>n[0]).slice(0,2).join("") ?? "?"}</div>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:13,color:"#0C4A6E"}}>{auxB?.nome}</div>
+                    <div style={{fontSize:11,color:"#0369A1",marginTop:2}}>Faz <strong>{swapMensalTargetShift.turnoNome}</strong> — {labelB}</div>
+                  </div>
+                </div>
+              </div>
+              <div style={{margin:"0 0 1rem",padding:"10px 14px",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:10,fontSize:12,color:"#475569"}}>
+                <div style={{fontWeight:700,marginBottom:5,color:"#334155"}}>Resultado:</div>
+                <div>{auxA?.nome?.split(" ")[0]} fica com <strong>{swapMensalTargetShift.turnoNome}</strong> — {labelA}</div>
+                <div style={{marginTop:3}}>{auxB?.nome?.split(" ")[0]} fica com <strong>{swapMensalSource.turnoNome}</strong> — {labelB}</div>
               </div>
               <div style={{display:"flex",gap:8}}>
                 <button onClick={()=>setSwapMensalConfirmOpen(false)} style={{flex:1,padding:"0.65rem",background:"#F4F4F5",border:"none",borderRadius:9,cursor:"pointer",fontSize:13,fontWeight:600,color:"#374151"}}>Cancelar</button>

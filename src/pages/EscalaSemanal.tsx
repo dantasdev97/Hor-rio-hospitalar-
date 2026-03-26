@@ -176,6 +176,10 @@ export default function EscalaSemanal() {
   const [ctrlSelectedCell, setCtrlSelectedCell] = useState<{ data:string; turnoLetra:TurnoLetra; posto:PostoKey; auxId:string }|null>(null)
   // Visual flash after swap
   const [swappedCells, setSwappedCells] = useState<Set<string>>(new Set())
+  // Multi-person Ctrl+Click picker
+  const [multiPickerOpen, setMultiPickerOpen] = useState(false)
+  const [multiPickerCell, setMultiPickerCell] = useState<{data:string;turnoLetra:TurnoLetra;posto:PostoKey;auxIds:string[]}|null>(null)
+  const [multiPickerCallback, setMultiPickerCallback] = useState<((auxId:string)=>void)|null>(null)
 
   const weekStart = startOfWeek(referenceDate, { weekStartsOn:1 })
   const weekDays  = Array.from({ length:7 }, (_,i) => addDays(weekStart, i))
@@ -858,6 +862,14 @@ export default function EscalaSemanal() {
     setSwapMode(true)
   }
 
+  function openSwapModeForAux(auxId: string) {
+    if (!selCell) return
+    setSwapSourceCell({ data: selCell.data, turnoLetra: selCell.turnoLetra, posto: selCell.posto, auxId })
+    setSwapTargetAuxId(null)
+    setSwapTargetCell(null)
+    setSwapMode(true)
+  }
+
   function closeSwapMode() {
     setSwapMode(false)
     setSwapSourceCell(null)
@@ -870,21 +882,18 @@ export default function EscalaSemanal() {
     const esc = getEscala(data, turnoLetra, posto)
     const auxId = esc?.auxiliar_id
     if (!auxId) return // empty cell — ignore
+    handleCtrlClickWithAux(data, turnoLetra, posto, auxId)
+  }
 
+  function handleCtrlClickWithAux(data: string, turnoLetra: TurnoLetra, posto: PostoKey, auxId: string) {
     if (!ctrlSelectedCell) {
-      // First selection
       setCtrlSelectedCell({ data, turnoLetra, posto, auxId })
     } else {
-      // Second selection — trigger swap confirm
-      if (ctrlSelectedCell.data === data && ctrlSelectedCell.turnoLetra === turnoLetra && ctrlSelectedCell.posto === posto) {
-        // Same cell clicked — deselect
-        setCtrlSelectedCell(null)
-        return
+      if (ctrlSelectedCell.data === data && ctrlSelectedCell.turnoLetra === turnoLetra && ctrlSelectedCell.posto === posto && ctrlSelectedCell.auxId === auxId) {
+        setCtrlSelectedCell(null); return
       }
       if (ctrlSelectedCell.auxId === auxId) {
-        // Same aux — can't swap with self
-        setCtrlSelectedCell(null)
-        return
+        setCtrlSelectedCell(null); return
       }
       setSwapSourceCell(ctrlSelectedCell)
       setSwapTargetCell({ data, turnoLetra, posto })
@@ -1696,8 +1705,25 @@ export default function EscalaSemanal() {
                       return(
                         <td key={p.key}
                           onClick={opera ? () => {
-                            if (ctrlHeld && !isDouble && !isDocCell) {
-                              handleCtrlClick(dateStr, turno, p.key as PostoKey)
+                            if (ctrlHeld && !isDocCell) {
+                              if (!isDouble) {
+                                handleCtrlClick(dateStr, turno, p.key as PostoKey)
+                              } else {
+                                const rows = getEscalas(dateStr, turno, p.key).filter(r => r.auxiliar_id)
+                                if (rows.length === 0) {
+                                  openCell(dateStr, turno, p.key as PostoKey)
+                                } else if (rows.length === 1) {
+                                  handleCtrlClickWithAux(dateStr, turno, p.key as PostoKey, rows[0].auxiliar_id!)
+                                } else {
+                                  setMultiPickerCell({ data:dateStr, turnoLetra:turno, posto:p.key as PostoKey, auxIds:rows.map(r=>r.auxiliar_id!) })
+                                  setMultiPickerCallback(()=>(auxId:string)=>{
+                                    handleCtrlClickWithAux(dateStr, turno, p.key as PostoKey, auxId)
+                                    setMultiPickerOpen(false)
+                                    setMultiPickerCell(null)
+                                  })
+                                  setMultiPickerOpen(true)
+                                }
+                              }
                             } else {
                               openCell(dateStr, turno, p.key as PostoKey)
                             }
@@ -1712,7 +1738,7 @@ export default function EscalaSemanal() {
                             opacity: !opera ? 0.5 : 1,
                             fontStyle: placeholder ? "italic" : "normal",
                             color: placeholder ? "#9CA3AF" : "inherit",
-                            cursor: !opera ? "not-allowed" : ctrlHeld && cellName && !isDouble && !isDocCell ? "crosshair" : "pointer",
+                            cursor: !opera ? "not-allowed" : ctrlHeld && cellName && !isDocCell ? "crosshair" : "pointer",
                             border: isCtrlSelected ? "2px solid #2563EB" : isSwapped ? "2px solid #2563EB" : isBlink ? (blinkIsUrg ? "2px solid #EF4444" : "2px solid #F59E0B") : temRestr ? "2px solid #EF4444" : isHighlighted ? "2px solid #3B82F6" : B,
                             boxShadow: isCtrlSelected ? "inset 0 0 0 1px #93C5FD" : isHighlighted ? "inset 0 0 0 1px #93C5FD" : undefined,
                             animation: isBlink ? (blinkIsUrg ? "blinkRed 1s ease 3" : "blinkYellow 1s ease 3") : isSwapped ? "swapFlash 1.2s ease 2" : undefined }}
@@ -1884,6 +1910,12 @@ export default function EscalaSemanal() {
                       </div>
                     </div>
                   </div>
+                  {/* Resultado */}
+                  <div style={{ margin:"0 20px 12px",padding:"10px 14px",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:"10px",fontSize:"12px",color:"#475569" }}>
+                    <div style={{ fontWeight:700,marginBottom:5,color:"#334155" }}>Resultado:</div>
+                    <div>{getFirstName(sourceAuxNome)} faz Turno {swapTargetCell.turnoLetra} em {targetPostoLabel} — {targetDayLabel}</div>
+                    <div style={{ marginTop:3 }}>{getFirstName(targetAuxNome)} faz Turno {swapSourceCell.turnoLetra} em {sourcePostoLabel} — {sourceDayLabel}</div>
+                  </div>
                   <div style={{ padding:"8px 20px 16px",display:"flex",gap:"8px",justifyContent:"flex-end" }}>
                     <button onClick={closeSwapMode} style={{ background:"#F4F4F4",border:"none",borderRadius:"8px",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#555" }}>Cancelar</button>
                     <button
@@ -1954,7 +1986,8 @@ export default function EscalaSemanal() {
                 const ausCode = selCell ? getAusenciaCode(p.id, selCell.data) : null
                 const ausLabel = ausCode ? `${ABSENCE_LABELS[ausCode] ?? ausCode} (${ausCode})` : null
                 const isBlocked = !!blockReason || !!ausLabel
-                const isDisabledFinal = isBlocked || isDisabledMulti
+                // Allow deselecting already-selected persons in multi-person cells regardless of block reason
+                const isDisabledFinal = (isSel && isDouble) ? false : (isBlocked || isDisabledMulti)
                 const pRestr = selCell
                   ? auxTemRestricao(p.id, selCell.posto, selCell.turnoLetra, selCell.data)
                   : false
@@ -2033,9 +2066,30 @@ export default function EscalaSemanal() {
                   onMouseEnter={e=>{e.currentTarget.style.background="#FFF5F5";e.currentTarget.style.borderColor="#E57373"}}
                   onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#FFCDD2"}}>Limpar seleção</button>
               )}
-              {/* Swap button — visible when cell has an aux assigned and is single-person */}
+              {/* Swap button — single-person cells */}
               {!isDouble && selCell?.tipo === "auxiliar" && (hasExisting || isDerived) && selPersonId && (
                 <button onClick={openSwapMode}
+                  style={{ background:"none",border:"1.5px solid #93C5FD",borderRadius:"8px",padding:"7px 14px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#2563EB",transition:"all 0.12s",display:"flex",alignItems:"center",gap:"5px" }}
+                  onMouseEnter={e=>{e.currentTarget.style.background="#EFF6FF";e.currentTarget.style.borderColor="#2563EB"}}
+                  onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#93C5FD"}}>
+                  <ArrowLeftRight size={13}/> Trocar
+                </button>
+              )}
+              {/* Swap button — multi-person cells (EXAM1/EXAM2) */}
+              {isDouble && selCell?.tipo === "auxiliar" && selPersonIds.length > 0 && (
+                <button onClick={() => {
+                  if (selPersonIds.length === 1) {
+                    openSwapModeForAux(selPersonIds[0])
+                  } else {
+                    setMultiPickerCell({ data:selCell.data, turnoLetra:selCell.turnoLetra, posto:selCell.posto, auxIds:selPersonIds })
+                    setMultiPickerCallback(()=>(auxId:string)=>{
+                      openSwapModeForAux(auxId)
+                      setMultiPickerOpen(false)
+                      setMultiPickerCell(null)
+                    })
+                    setMultiPickerOpen(true)
+                  }
+                }}
                   style={{ background:"none",border:"1.5px solid #93C5FD",borderRadius:"8px",padding:"7px 14px",cursor:"pointer",fontSize:"12px",fontWeight:600,color:"#2563EB",transition:"all 0.12s",display:"flex",alignItems:"center",gap:"5px" }}
                   onMouseEnter={e=>{e.currentTarget.style.background="#EFF6FF";e.currentTarget.style.borderColor="#2563EB"}}
                   onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.borderColor="#93C5FD"}}>
@@ -2100,6 +2154,12 @@ export default function EscalaSemanal() {
                   </div>
                 </div>
               </div>
+              {/* Resultado da troca */}
+              <div style={{ margin:"0 0 1rem",padding:"10px 14px",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:"10px",fontSize:"12px",color:"#475569" }}>
+                <div style={{ fontWeight:700,marginBottom:6,color:"#334155" }}>Resultado:</div>
+                <div>{getFirstName(nomeA)} faz Turno {swapTargetCell.turnoLetra} em {postoB} — {dayB}</div>
+                <div style={{ marginTop:3 }}>{getFirstName(nomeB)} faz Turno {swapSourceCell.turnoLetra} em {postoA} — {dayA}</div>
+              </div>
               <div style={{ display:"flex",gap:8 }}>
                 <button onClick={() => { setSwapConfirmOpen(false); setCtrlSelectedCell(null) }}
                   style={{ flex:1,padding:"0.65rem",background:"#F4F4F5",border:"none",borderRadius:9,cursor:"pointer",fontSize:13,fontWeight:600,color:"#374151" }}>Cancelar</button>
@@ -2113,6 +2173,35 @@ export default function EscalaSemanal() {
           </>
         )
       })()}
+
+      {/* Multi-person aux picker for Ctrl+Click swap */}
+      {multiPickerOpen && multiPickerCell && (
+        <>
+          <div style={{ position:"fixed",inset:0,zIndex:102,background:"rgba(0,0,0,0.35)" }}
+               onClick={() => { setMultiPickerOpen(false); setMultiPickerCell(null) }} />
+          <div style={{ position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#fff",borderRadius:"14px",padding:"24px",zIndex:103,minWidth:"260px",boxShadow:"0 8px 32px rgba(0,0,0,0.18)" }}>
+            <h3 style={{ margin:"0 0 6px",fontSize:"15px",fontWeight:700,color:"#1e293b" }}>Selecionar Auxiliar</h3>
+            <p style={{ margin:"0 0 14px",fontSize:"12px",color:"#64748b" }}>
+              {multiPickerCell.posto === "EXAM1" ? "ECO URG" : multiPickerCell.posto === "EXAM2" ? "Eco Complementar" : "Transportes"} — {multiPickerCell.turnoLetra === "M" ? "Manhã" : "Tarde"}
+            </p>
+            {multiPickerCell.auxIds.map(auxId => {
+              const nome = auxiliares.find(a => a.id === auxId)?.nome ?? auxId
+              return (
+                <button key={auxId} onClick={() => multiPickerCallback?.(auxId)}
+                  style={{ display:"block",width:"100%",padding:"10px 14px",margin:"0 0 8px",background:"#F0F7FF",border:"1.5px solid #BFDBFE",borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:600,color:"#1E40AF",textAlign:"left" }}
+                  onMouseEnter={e=>(e.currentTarget.style.background="#DBEAFE")}
+                  onMouseLeave={e=>(e.currentTarget.style.background="#F0F7FF")}>
+                  {nome}
+                </button>
+              )
+            })}
+            <button onClick={() => { setMultiPickerOpen(false); setMultiPickerCell(null) }}
+              style={{ marginTop:"4px",background:"none",border:"none",fontSize:"12px",color:"#94a3b8",cursor:"pointer" }}>
+              Cancelar
+            </button>
+          </div>
+        </>
+      )}
 
       {/* Painel de Alertas (componente partilhado) */}
       <AlertPanel
